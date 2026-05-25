@@ -40,6 +40,12 @@
                     
                     <div class="form-grid">
                         <div class="form-group">
+                            <label for="api-base-url">API Endpoint URL</label>
+                            <input type="text" id="api-base-url" value="" placeholder="Default (Relative /)">
+                            <span class="help-text">Custom backend URL (e.g. http://localhost:8000)</span>
+                        </div>
+
+                        <div class="form-group">
                             <label for="fontname">Font ID Name</label>
                             <input type="text" id="fontname" value="MyCustomFont" placeholder="e.g. MyFont">
                             <span class="help-text">URL-friendly, no spaces</span>
@@ -408,7 +414,8 @@
                     modalStatus.textContent = 'Embedding color vector outlines...';
                 }, 6000);
 
-                const response = await fetch('/api/generate-font', {
+                const apiBase = document.getElementById('api-base-url').value.trim().replace(/\/$/, '') || '';
+                const response = await fetch(`${apiBase}/api/generate-font`, {
                     method: 'POST',
                     body: formData
                 });
