@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Start the png2font FastAPI Server
 echo "================================================================="
-echo "  📦 Conda Environment: genFont"
+echo "  🚀 Starting png2font API Server on http://127.0.0.1:8000"
+echo "  📦 Conda Environment: genFontAPI"
 echo "================================================================="
 
 # Source Conda setup script to enable 'conda activate' inside subshells
@@ -19,38 +20,7 @@ else
 fi
 
 # Activate the conda environment correctly
-conda activate genFont
+conda activate genFontAPI
 
-
-# Usage: ./run.sh [PNG_FOLDER] [FONTNAME]
-# Defaults: PNG_FOLDER=glyphs, FONTNAME from config.toml or MyCustomFont
-
-PNG_FOLDER=${1:-glyphs}
-
-# If a font name was provided as the second arg, use it; otherwise try config.toml
-if [ "${2:-}" != "" ]; then
-	FONTNAME="$2"
-else
-	FONTNAME=""
-	if [ -f config.toml ]; then
-		# Find the fontname under the [font] table. Trim spaces and quotes.
-		FONTNAME=$(awk -F'=' '
-			/^\[font\]/{in_font=1; next}
-			in_font && $1 ~ /fontname/ {
-				v=$2; gsub(/^[ \t]+|[ \t]+$/,"",v); gsub(/\"/,"",v); print v; exit
-			}
-		' config.toml)
-	fi
-	FONTNAME=${FONTNAME:-MyCustomFont}
-fi
-
-echo "Converting PNGs in '${PNG_FOLDER}' to SVGs..."
-python3 png2svg.py --png_folder "${PNG_FOLDER}" --svg_output "svg_glyphs"
-
-echo "Generating TTF from svg_glyphs with fontname='${FONTNAME}'..."
-fontforge -script font.py svg_glyphs --fontname "${FONTNAME}" --fullname "${FONTNAME}" --familyname "${FONTNAME}"
-
-echo "Embedding SVGs into ${FONTNAME}.ttf..."
-addsvg svg_glyphs "${FONTNAME}.ttf"
-
-echo "Done. Output: ${FONTNAME}.ttf"
+# Run Uvicorn directly within the fully activated shell environment
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload

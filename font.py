@@ -5,35 +5,6 @@ import argparse
 
 from config import CONFIG
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("svg_folder", nargs="?", default="svg_glyphs/")
-    parser.add_argument("--fontname")
-    parser.add_argument("--fullname")
-    parser.add_argument("--familyname")
-    return parser.parse_args()
-
-
-def resolve_config(args: argparse.Namespace) -> tuple[str, str, str, str]:
-    fontname = args.fontname or CONFIG.fontname
-    fullname = args.fullname or CONFIG.fullname
-    familyname = args.familyname or CONFIG.familyname
-    return args.svg_folder, fontname, fullname, familyname
-
-
-# 建立新的字型專案
-ARGS = parse_args()
-SVG_FOLDER, fontname, fullname, familyname = resolve_config(ARGS)
-
-font = fontforge.font()
-font.encoding = "UnicodeFull"
-font.fontname = fontname
-font.fullname = fullname
-font.familyname = familyname
-svg_folder = SVG_FOLDER  # 存放 SVG 字圖的資料夾
-
-
 def svg_filename_to_codepoint(filename: str) -> int:
     stem = filename.rsplit(".", 1)[0]
     prefix = stem.split("_", 1)[0]
@@ -50,16 +21,24 @@ def svg_filename_to_codepoint(filename: str) -> int:
     raise ValueError(f"Cannot infer a Unicode code point from {filename!r}.")
 
 
-def import_glyphs_from_svg(folder):
+def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, upm, advance_width, vertical_raise):
+    font = fontforge.font()
+    font.fontname = fontname
+    font.fullname = fullname
+    font.familyname = familyname
+    font.em = upm
 
     for filename in os.listdir(folder):
         if filename.endswith(".svg"):
-            # resize the svg to fit the em square (1000x1000)
+            # resize the svg to fit the em square
             svg_path = os.path.join(folder, filename)
-            char_code = svg_filename_to_codepoint(filename)
+            try:
+                char_code = svg_filename_to_codepoint(filename)
+            except ValueError as e:
+                print(f"Skipping {filename}: {e}")
+                continue
+
             glyph = font.createChar(char_code)
-            # if char_code >= ord("a") and char_code <= ord("z"):
-            #     glyph.glyphname = f"{filename[0]}_lower"
             glyph.glyphname = f"{filename.rsplit('.', 1)[0]}"
             glyph.importOutlines(svg_path)
 
@@ -85,11 +64,37 @@ def import_glyphs_from_svg(folder):
                 f"Successfully imported {filename} to Unicode {char_code} {chr(char_code)}"
             )
 
-    font.generate(f"{font.fontname}.ttf")
+    font.generate(output_path)
+    print(f"Font generated at {output_path}")
 
 
 def main() -> None:
-    import_glyphs_from_svg(svg_folder)
+    parser = argparse.ArgumentParser(description="Generate monospace TTF from SVG folder.")
+    parser.add_argument("svg_folder", nargs="?", default="svg_glyphs/", help="Folder containing SVG glyphs")
+    parser.add_argument("--output", default=None, help="Output TTF file path")
+    parser.add_argument("--fontname", default=CONFIG.fontname, help="Font name")
+    parser.add_argument("--fullname", default=CONFIG.fullname, help="Full font name")
+    parser.add_argument("--familyname", default=CONFIG.familyname, help="Font family name")
+    parser.add_argument("--upm", type=int, default=CONFIG.upm, help="Units per em")
+    parser.add_argument("--advance-width", type=int, default=CONFIG.advance_width, help="Monospace advance width")
+    parser.add_argument("--vertical-raise", type=int, default=120, help="Vertical raise offset")
+
+    args, unknown = parser.parse_known_args()
+
+    # If FontForge script runner adds extra args or if there are unexpected positional args
+    # we filter and handle them safely
+    output_ttf = args.output if args.output else f"{args.fontname}.ttf"
+
+    import_glyphs_from_svg(
+        folder=args.svg_folder,
+        output_path=output_ttf,
+        fontname=args.fontname,
+        fullname=args.fullname,
+        familyname=args.familyname,
+        upm=args.upm,
+        advance_width=args.advance_width,
+        vertical_raise=args.vertical_raise
+    )
 
 
 if __name__ == "__main__":

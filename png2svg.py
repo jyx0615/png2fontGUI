@@ -185,6 +185,24 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             os.remove(upscaled_png_path)
 
 
+def convert_pngs_to_svgs(png_folder: Path | str, svg_output: Path | str, target_upm: int = UPM) -> None:
+    png_directory = Path(png_folder)
+    svg_output_directory = Path(svg_output)
+
+    svg_output_directory.mkdir(parents=True, exist_ok=True)
+
+    for png_path in sorted(png_directory.glob("*.png")):
+        filename = png_path.name
+        new_file_name = filename.replace("_alpha", "").rsplit(".", 1)[0] + ".svg"
+        svg_output_path = svg_output_directory / new_file_name
+        wrap_png_to_svg(png_path, svg_output_path, target_upm=target_upm)
+        print(f"Converted {filename} to SVG format.")
+
+    space_svg_output_path = svg_output_directory / "u0020.svg"
+    create_empty_svg(space_svg_output_path, width=target_upm, height=target_upm)
+    print("Created empty space SVG to preserve monospace width.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert PNG glyphs to normalized SVGs."
@@ -203,21 +221,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    png_directory = Path(args.png_folder)
-    svg_output_directory = Path(args.svg_output)
-
-    svg_output_directory.mkdir(parents=True, exist_ok=True)
-
-    for png_path in sorted(png_directory.glob("*.png")):
-        filename = png_path.name
-        new_file_name = filename.replace("_alpha", "").rsplit(".", 1)[0] + ".svg"
-        svg_output_path = svg_output_directory / new_file_name
-        wrap_png_to_svg(png_path, svg_output_path)
-        print(f"Converted {filename} to SVG format.")
-
-    space_svg_output_path = svg_output_directory / "u0020.svg"
-    create_empty_svg(space_svg_output_path)
-    print("Created empty space SVG to preserve monospace width.")
+    convert_pngs_to_svgs(args.png_folder, args.svg_output)
 
 
 if __name__ == "__main__":

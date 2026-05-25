@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>png2font — Premium Font Generator</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome/Lucide Icons via SVG or CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Abstract Ambient Glow Backgrounds -->
+    <div class="glow-sphere glow-1"></div>
+    <div class="glow-sphere glow-2"></div>
+    <div class="glow-sphere glow-3"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <i data-lucide="type" class="logo-icon"></i>
+                <h1>png2font</h1>
+                <span class="badge">v1.0</span>
+            </div>
+            <p class="subtitle">Convert PNG glyphs into pixel-perfect monospace OpenType TTF fonts instantly</p>
+            <div class="nav-links">
+                <a href="/docs" target="_blank" class="nav-link"><i data-lucide="file-text"></i> API Docs</a>
+            </div>
+        </header>
+
+        <main class="app-main">
+            <!-- Left Panel: Settings & Upload -->
+            <section class="control-panel glass-card">
+                <div class="panel-section">
+                    <h2 class="section-title"><i data-lucide="sliders"></i> Font Parameters</h2>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="fontname">Font ID Name</label>
+                            <input type="text" id="fontname" value="MyCustomFont" placeholder="e.g. MyFont">
+                            <span class="help-text">URL-friendly, no spaces</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="fullname">Full Font Name</label>
+                            <input type="text" id="fullname" value="My Custom Font" placeholder="e.g. My Custom Font">
+                            <span class="help-text">Visible name in font menus</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="familyname">Font Family</label>
+                            <input type="text" id="familyname" value="My Family" placeholder="e.g. My Family">
+                            <span class="help-text">Logical grouping family</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="upm">Units Per Em (UPM)</label>
+                            <span class="slider-value" id="upm-val">1000</span>
+                        </div>
+                        <input type="range" id="upm" min="500" max="2048" step="1" value="1000">
+                        <span class="help-text">Grid scale width & height of the character canvas</span>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="advance_width">Monospace Width</label>
+                            <span class="slider-value" id="width-val">600</span>
+                        </div>
+                        <input type="range" id="advance_width" min="500" max="2048" step="1" value="600">
+                        <span class="help-text">Monospace character width width for all glyphs</span>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="vertical_raise">Vertical Raise</label>
+                            <span class="slider-value" id="raise-val">120</span>
+                        </div>
+                        <input type="range" id="vertical_raise" min="-500" max="500" step="1" value="120">
+                        <span class="help-text">Moves character drawing baseline up or down</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Drag-and-drop & Grid Map -->
+            <section class="workspace-panel">
+                <!-- Dropzone -->
+                <div class="dropzone glass-card" id="dropzone">
+                    <input type="file" id="file-input" multiple accept="image/png" class="file-input">
+                    <i data-lucide="cloud-upload" class="upload-icon"></i>
+                    <h3>Drag & Drop PNG Glyphs</h3>
+                    <p>Or click to browse your local files</p>
+                    <div class="supported-formats">
+                        <span><strong>Standard:</strong> <code>A.png</code>, <code>b.png</code>, <code>5.png</code></span>
+                        <span><strong>Unicode Hex:</strong> <code>u0041.png</code>, <code>0041.png</code></span>
+                    </div>
+                </div>
+
+                <!-- Accordion Guide -->
+                <details class="guide-accordion glass-card">
+                    <summary class="accordion-header">
+                        <span><i data-lucide="help-circle"></i> File Naming Guideline</span>
+                        <i data-lucide="chevron-down" class="chevron-icon"></i>
+                    </summary>
+                    <div class="accordion-content">
+                        <p>To let the system know which character each PNG represents, name your files according to these standards:</p>
+                        <ul>
+                            <li><strong>Single Characters:</strong> Simply name the file as the character itself (e.g. <code>A.png</code>, <code>z.png</code>, <code>7.png</code>, <code>$.png</code>). Case is preserved!</li>
+                            <li><strong>Unicode Format:</strong> Use prefix <code>u</code> followed by the hex codepoint (e.g. <code>u0041.png</code> for 'A', <code>u0035.png</code> for '5').</li>
+                            <li><strong>Raw Hex Format:</strong> Just name it with the 4-to-6 hex digits (e.g. <code>0041.png</code>).</li>
+                            <li><strong>Alphanumeric tags:</strong> You can append suffix after an underscore (e.g. <code>A_bold.png</code> or <code>u0041_alpha.png</code>). The prefix before the first underscore is used for codepoint resolution.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <!-- Grid Preview -->
+                <div class="preview-section glass-card hidden" id="preview-card">
+                    <div class="preview-header">
+                        <h3>Uploaded Glyphs (<span id="file-count">0</span>)</h3>
+                        <button class="btn btn-danger-link" id="clear-btn"><i data-lucide="trash-2"></i> Clear All</button>
+                    </div>
+                    <div class="glyph-grid" id="glyph-grid"></div>
+                </div>
+
+                <!-- Generate Trigger -->
+                <div class="action-footer">
+                    <button class="btn btn-primary btn-large disabled" id="generate-btn" disabled>
+                        <i data-lucide="zap"></i> Compile Monospace TTF
+                    </button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Active Loading Processing Modal -->
+    <div class="modal-overlay hidden" id="loading-modal">
+        <div class="modal-card glass-card">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <div class="spinner-core"></div>
+            </div>
+            <h3 id="modal-status">Initializing Compilation...</h3>
+            <div class="steps-progress">
+                <div class="step-item active" id="step-upload"><span class="step-dot"></span> Uploading glyph assets</div>
+                <div class="step-item" id="step-trace"><span class="step-dot"></span> Tracing PNGs to SVG contours</div>
+                <div class="step-item" id="step-compile"><span class="step-dot"></span> Building TTF with FontForge</div>
+                <div class="step-item" id="step-embed"><span class="step-dot"></span> Embedding color vector shapes</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Magic Font Preview & Success Modal -->
+    <div class="modal-overlay hidden" id="success-modal">
+        <div class="modal-card glass-card success-card">
+            <div class="success-icon-container animate-success">
+                <i data-lucide="check-circle" class="success-icon"></i>
+            </div>
+            <h2>Compilation Successful!</h2>
+            <p>Your custom font has been built and resides in memory.</p>
+
+            <!-- Dynamic Font Test Bench -->
+            <div class="test-bench">
+                <div class="bench-header">
+                    <span>Live Browser Test Bench</span>
+                    <span class="preview-badge" id="preview-font-badge">Active Font</span>
+                </div>
+                <textarea id="test-text" placeholder="Type here to test your compiled font in real-time inside the browser..."></textarea>
+                <div class="charset-preview-label">Monospace Character Preview:</div>
+                <div class="charset-grid" id="charset-grid">
+                    abcdefghijklmnopqrstuvwxyz<br>
+                    ABCDEFGHIJKLMNOPQRSTUVWXYZ<br>
+                    0123456789 !@#$%^&*()_+
+                </div>
+            </div>
+
+            <div class="modal-buttons">
+                <a href="#" id="download-link" class="btn btn-primary"><i data-lucide="download"></i> Download TTF</a>
+                <button class="btn btn-secondary" id="close-success-btn">Generate Another</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Logic -->
+    <script>
+        // Init Lucide Icons
+        lucide.createIcons();
+
+        // State variables
+        let uploadedFiles = [];
+
+        // DOM elements
+        const upmInput = document.getElementById('upm');
+        const upmVal = document.getElementById('upm-val');
+        const widthInput = document.getElementById('advance_width');
+        const widthVal = document.getElementById('width-val');
+        const raiseInput = document.getElementById('vertical_raise');
+        const raiseVal = document.getElementById('raise-val');
+        
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const previewCard = document.getElementById('preview-card');
+        const fileCount = document.getElementById('file-count');
+        const glyphGrid = document.getElementById('glyph-grid');
+        const generateBtn = document.getElementById('generate-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        
+        const loadingModal = document.getElementById('loading-modal');
+        const successModal = document.getElementById('success-modal');
+        const modalStatus = document.getElementById('modal-status');
+        const downloadLink = document.getElementById('download-link');
+        const closeSuccessBtn = document.getElementById('close-success-btn');
+        
+        const testText = document.getElementById('test-text');
+        const fontnameInput = document.getElementById('fontname');
+        const fullnameInput = document.getElementById('fullname');
+        const familynameInput = document.getElementById('familyname');
+
+        // Realtime Sliders Listeners
+        upmInput.addEventListener('input', (e) => upmVal.textContent = e.target.value);
+        widthInput.addEventListener('input', (e) => widthVal.textContent = e.target.value);
+        raiseInput.addEventListener('input', (e) => raiseVal.textContent = e.target.value);
+
+        // Helper to infer character from file name
+        function inferCharacter(filename) {
+            const stem = filename.replace(/\.png$/i, '');
+            const prefix = stem.split('_')[0];
+            
+            if (prefix.length === 1) {
+                return { char: prefix, codepoint: '0x' + prefix.charCodeAt(0).toString(16).toUpperCase() };
+            }
+            
+            // Matches u0041 or u1F600
+            const uMatch = prefix.match(/^u([0-9a-fA-F]{4,6})$/);
+            if (uMatch) {
+                const val = parseInt(uMatch[1], 16);
+                return { char: String.fromCodePoint(val), codepoint: '0x' + val.toString(16).toUpperCase() };
+            }
+            
+            // Matches raw hex 0041 or 1F600
+            const hexMatch = prefix.match(/^([0-9a-fA-F]{4,6})$/);
+            if (hexMatch) {
+                const val = parseInt(hexMatch[1], 16);
+                return { char: String.fromCodePoint(val), codepoint: '0x' + val.toString(16).toUpperCase() };
+            }
+            
+            return { char: '?', codepoint: 'Unknown' };
+        }
+
+        // Handle File Addition
+        function handleFiles(files) {
+            Array.from(files).forEach(file => {
+                if (file.type !== "image/png" && !file.name.toLowerCase().endswith('.png')) return;
+                
+                // Avoid duplicates
+                if (uploadedFiles.some(f => f.name === file.name)) return;
+                
+                uploadedFiles.push(file);
+            });
+
+            updateGrid();
+        }
+
+        // Update grid display
+        function updateGrid() {
+            if (uploadedFiles.length === 0) {
+                previewCard.classList.add('hidden');
+                generateBtn.classList.add('disabled');
+                generateBtn.disabled = true;
+                return;
+            }
+
+            previewCard.classList.remove('hidden');
+            generateBtn.classList.remove('disabled');
+            generateBtn.disabled = false;
+            fileCount.textContent = uploadedFiles.length;
+
+            glyphGrid.innerHTML = '';
+            
+            // Sort uploaded files for consistency
+            uploadedFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+            uploadedFiles.forEach((file, index) => {
+                const reader = new FileReader();
+                const card = document.createElement('div');
+                card.className = 'glyph-card';
+                
+                const { char, codepoint } = inferCharacter(file.name);
+
+                card.innerHTML = `
+                    <button class="remove-glyph" data-index="${index}">&times;</button>
+                    <div class="glyph-img-container">
+                        <img id="img-preview-${index}" alt="${file.name}">
+                    </div>
+                    <div class="glyph-info">
+                        <span class="glyph-char">${char}</span>
+                        <span class="glyph-hex">${codepoint}</span>
+                        <span class="glyph-filename" title="${file.name}">${file.name}</span>
+                    </div>
+                `;
+
+                glyphGrid.appendChild(card);
+
+                reader.onload = function(e) {
+                    document.getElementById(`img-preview-${index}`).src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            });
+
+            // Re-bind remove buttons
+            document.querySelectorAll('.remove-glyph').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const idx = parseInt(btn.getAttribute('data-index'));
+                    uploadedFiles.splice(idx, 1);
+                    updateGrid();
+                });
+            });
+        }
+
+        // Drag & Drop Handlers
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('active');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('active');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('active');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        dropzone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+            fileInput.value = ''; // Reset
+        });
+
+        clearBtn.addEventListener('click', () => {
+            uploadedFiles = [];
+            updateGrid();
+        });
+
+        // Trigger loading stages simulation
+        function setStepActive(stepId) {
+            document.querySelectorAll('.step-item').forEach(el => el.classList.remove('active', 'completed'));
+            const activeStep = document.getElementById(stepId);
+            if (activeStep) {
+                activeStep.classList.add('active');
+                
+                // Mark previous steps completed
+                let prev = activeStep.previousElementSibling;
+                while (prev) {
+                    prev.classList.add('completed');
+                    prev = prev.previousElementSibling;
+                }
+            }
+        }
+
+        // Dynamic API trigger
+        generateBtn.addEventListener('click', async () => {
+            if (uploadedFiles.length === 0) return;
+
+            const formData = new FormData();
+            uploadedFiles.forEach(file => {
+                formData.append('files', file);
+            });
+
+            formData.append('fontname', fontnameInput.value || 'MyCustomFont');
+            formData.append('fullname', fullnameInput.value || 'My Custom Font');
+            formData.append('familyname', familynameInput.value || 'My Family');
+            formData.append('upm', upmInput.value);
+            formData.append('advance_width', widthInput.value);
+            formData.append('vertical_raise', raiseInput.value);
+
+            // Display loading overlay
+            loadingModal.classList.remove('hidden');
+            
+            // Simulate pipeline step visual state changes
+            setStepActive('step-upload');
+            modalStatus.textContent = 'Uploading files...';
+
+            try {
+                // Simulate processing updates based on timeouts
+                const stepTimer1 = setTimeout(() => {
+                    setStepActive('step-trace');
+                    modalStatus.textContent = 'Tracing PNGs to clean SVG outlines...';
+                }, 1000);
+
+                const stepTimer2 = setTimeout(() => {
+                    setStepActive('step-compile');
+                    modalStatus.textContent = 'Building monospace glyphs in FontForge...';
+                }, 3000);
+
+                const stepTimer3 = setTimeout(() => {
+                    setStepActive('step-embed');
+                    modalStatus.textContent = 'Embedding color vector outlines...';
+                }, 6000);
+
+                const response = await fetch('/api/generate-font', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                // Clear fast timers
+                clearTimeout(stepTimer1);
+                clearTimeout(stepTimer2);
+                clearTimeout(stepTimer3);
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Font generation failed on the server.');
+                }
+
+                // Retrieve Font Blob
+                const fontBlob = await response.blob();
+                const fontUrl = URL.createObjectURL(fontBlob);
+                
+                // Complete all steps in UI
+                document.querySelectorAll('.step-item').forEach(el => el.classList.add('completed'));
+                
+                // Generate unique Font Family name to inject dynamically
+                const customFontName = (fontnameInput.value || 'MyCustomFont') + '_' + Date.now();
+                
+                modalStatus.textContent = 'Injecting generated font...';
+                
+                // Inject custom FontFace dynamically into the web page!
+                const fontFace = new FontFace(customFontName, `url(${fontUrl})`);
+                await fontFace.load();
+                document.fonts.add(fontFace);
+                
+                // Configure Preview Font Fam
+                testText.style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
+                document.getElementById('charset-grid').style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
+                document.getElementById('preview-font-badge').textContent = fontnameInput.value;
+                testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 - MONOSPACE ALIGNMENT`;
+
+                // Update download link
+                downloadLink.href = fontUrl;
+                downloadLink.download = `${fontnameInput.value || 'font'}.ttf`;
+
+                // Transpose to success modal
+                loadingModal.classList.add('hidden');
+                successModal.classList.remove('hidden');
+
+            } catch (err) {
+                loadingModal.classList.add('hidden');
+                alert('Generation Error: ' + err.message);
+            }
+        });
+
+        // Close Success Mod
+        closeSuccessBtn.addEventListener('click', () => {
+            successModal.classList.add('hidden');
+        });
+    </script>
+</body>
+</html>
