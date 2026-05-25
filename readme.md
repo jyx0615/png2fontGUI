@@ -19,6 +19,13 @@ pip install -r requirements.txt
 ./run.sh my_pngs MyType # use folder `my_pngs` and produce `MyType.ttf`
 ```
 
+**Web UI**
+
+- Start the FastAPI app with `./run.sh` or `uvicorn app:app --reload`.
+- Open `http://127.0.0.1:8000/` for the browser UI.
+- Open `http://127.0.0.1:8000/docs` for the interactive API docs.
+- The web UI serves the same font-generation pipeline as the CLI, but with drag-and-drop uploads and live parameter controls.
+
 Notes:
 
 - `svgcleaner` is a native binary; download it from https://github.com/RazrFalcon/svgcleaner/releases and place it in the project root, then run `chmod +x svgcleaner`.
