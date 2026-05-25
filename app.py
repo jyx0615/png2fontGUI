@@ -57,7 +57,7 @@ async def generate_font(
     fullname: str = Form("My Custom Font", description="Full display name of the font"),
     familyname: str = Form("My Family", description="Font family name group"),
     upm: int = Form(1000, description="Units per EM (square canvas height/width)"),
-    advance_width: int = Form(6000, description="Monospace advance character width"),
+    advance_width: int = Form(600, description="Monospace advance character width"),
     vertical_raise: int = Form(120, description="Baseline raise offset to align glyphs"),
 ):
     # Validate uploaded files are PNGs
