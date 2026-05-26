@@ -9,6 +9,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     fontforge \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set standard working directory
@@ -28,8 +29,9 @@ RUN pip install --no-cache-dir \
 # Copy remaining source code and asset files
 COPY . /app/
 
-# Ensure pre-compiled svgcleaner is executable inside the container
-RUN chmod +x /app/svgcleaner
+# Download the Linux x86_64 svgcleaner binary (replaces the macOS binary copied above)
+RUN curl -sL https://github.com/RazrFalcon/svgcleaner/releases/download/v0.9.5/svgcleaner_linux_x86_64_0.9.5.tar.gz \
+    | tar -xz -C /usr/local/bin/ svgcleaner && chmod +x /usr/local/bin/svgcleaner
 
 # Expose default API server port
 EXPOSE 8000
