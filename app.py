@@ -59,6 +59,7 @@ async def generate_font(
     upm: int = Form(1000, description="Units per EM (square canvas height/width)"),
     advance_width: int = Form(600, description="Monospace advance character width"),
     vertical_raise: int = Form(120, description="Baseline raise offset to align glyphs"),
+    monospace: bool = Form(True, description="Whether to generate a monospace font"),
 ):
     # Validate uploaded files are PNGs
     for file in files:
@@ -109,6 +110,8 @@ async def generate_font(
             "--advance-width", str(advance_width),
             "--vertical-raise", str(vertical_raise)
         ]
+        if monospace:
+            fontforge_cmd.append("--monospace")
 
         logger.info(f"Executing FontForge: {' '.join(fontforge_cmd)}")
         ff_res = subprocess.run(fontforge_cmd, capture_output=True, text=True, check=False)

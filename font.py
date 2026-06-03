@@ -21,12 +21,13 @@ def svg_filename_to_codepoint(filename: str) -> int:
     raise ValueError(f"Cannot infer a Unicode code point from {filename!r}.")
 
 
-def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, upm, advance_width, vertical_raise):
+def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace=False):
     font = fontforge.font()
     font.fontname = fontname
     font.fullname = fullname
     font.familyname = familyname
     font.em = upm
+    font.encoding = "UnicodeFull"
 
     for filename in os.listdir(folder):
         if filename.endswith(".svg"):
@@ -51,15 +52,23 @@ def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, 
                 # height maps to UPM — all glyphs share the same vertical
                 # reference.  Do NOT re-scale here; that would blow up short
                 # glyphs (=, –, …) to enormous widths.
-                # Just shift the glyph so its left ink edge starts at x = 0.
-                glyph.transform((1, 0, 0, 1, -xmin, 0))
+                if monospace:
+                    # Center the glyph within the monospace advance_width
+                    dx = -xmin + round((advance_width - width) / 2)
+                    glyph.transform((1, 0, 0, 1, dx, 0))
+                else:
+                    # Just shift the glyph so its left ink edge starts at x = 0.
+                    glyph.transform((1, 0, 0, 1, -xmin, 0))
 
             if char_code == 32:
-                glyph.width = CONFIG.space_width
+                glyph.width = advance_width if monospace else CONFIG.space_width
             else:
-                # Advance width = actual ink width (no sidebearing).
-                xmin2, _, xmax2, _ = glyph.boundingBox()
-                glyph.width = max(1, round(xmax2 - xmin2))
+                if monospace:
+                    glyph.width = advance_width
+                else:
+                    # Advance width = actual ink width (no sidebearing).
+                    xmin2, _, xmax2, _ = glyph.boundingBox()
+                    glyph.width = max(1, round(xmax2 - xmin2))
             print(
                 f"Successfully imported {filename} to Unicode {char_code} {chr(char_code)}"
             )
@@ -78,6 +87,7 @@ def main() -> None:
     parser.add_argument("--upm", type=int, default=CONFIG.upm, help="Units per em")
     parser.add_argument("--advance-width", type=int, default=CONFIG.advance_width, help="Monospace advance width")
     parser.add_argument("--vertical-raise", type=int, default=120, help="Vertical raise offset")
+    parser.add_argument("--monospace", action="store_true", default=False, help="Generate monospace font")
 
     args, unknown = parser.parse_known_args()
 
@@ -93,7 +103,8 @@ def main() -> None:
         familyname=args.familyname,
         upm=args.upm,
         advance_width=args.advance_width,
-        vertical_raise=args.vertical_raise
+        vertical_raise=args.vertical_raise,
+        monospace=args.monospace
     )
 
 

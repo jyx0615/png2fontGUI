@@ -73,13 +73,24 @@
                         <span class="help-text">Grid scale width & height of the character canvas</span>
                     </div>
 
-                    <div class="slider-group">
+                    <div class="switch-group">
+                        <div class="switch-label-container">
+                            <label for="monospace-toggle">Monospace Layout</label>
+                            <span class="help-text">Generate a font with uniform character widths</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="monospace-toggle" checked>
+                            <span class="slider-switch"></span>
+                        </label>
+                    </div>
+
+                    <div class="slider-group" id="advance-width-group">
                         <div class="slider-header">
                             <label for="advance_width">Monospace Width</label>
                             <span class="slider-value" id="width-val">600</span>
                         </div>
                         <input type="range" id="advance_width" min="500" max="2048" step="1" value="600">
-                        <span class="help-text">Monospace character width width for all glyphs</span>
+                        <span class="help-text">Monospace character width for all glyphs</span>
                     </div>
 
                     <div class="slider-group">
@@ -206,6 +217,8 @@
         const widthVal = document.getElementById('width-val');
         const raiseInput = document.getElementById('vertical_raise');
         const raiseVal = document.getElementById('raise-val');
+        const monospaceToggle = document.getElementById('monospace-toggle');
+        const advanceWidthGroup = document.getElementById('advance-width-group');
         
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('file-input');
@@ -230,6 +243,21 @@
         upmInput.addEventListener('input', (e) => upmVal.textContent = e.target.value);
         widthInput.addEventListener('input', (e) => widthVal.textContent = e.target.value);
         raiseInput.addEventListener('input', (e) => raiseVal.textContent = e.target.value);
+
+        // Toggle Monospace slider activation & button text dynamically
+        monospaceToggle.addEventListener('change', () => {
+            if (monospaceToggle.checked) {
+                advanceWidthGroup.classList.remove('disabled');
+                widthInput.removeAttribute('disabled');
+                generateBtn.innerHTML = '<i data-lucide="zap"></i> Compile Monospace TTF';
+            } else {
+                advanceWidthGroup.classList.add('disabled');
+                widthInput.setAttribute('disabled', 'true');
+                generateBtn.innerHTML = '<i data-lucide="zap"></i> Compile Proportional TTF';
+            }
+            // Re-render Lucide icons inside the button
+            lucide.createIcons();
+        });
 
         // Helper to infer character from file name
         function inferCharacter(filename) {
@@ -389,6 +417,7 @@
             formData.append('upm', upmInput.value);
             formData.append('advance_width', widthInput.value);
             formData.append('vertical_raise', raiseInput.value);
+            formData.append('monospace', monospaceToggle.checked);
 
             // Display loading overlay
             loadingModal.classList.remove('hidden');
@@ -406,7 +435,9 @@
 
                 const stepTimer2 = setTimeout(() => {
                     setStepActive('step-compile');
-                    modalStatus.textContent = 'Building monospace glyphs in FontForge...';
+                    modalStatus.textContent = monospaceToggle.checked
+                        ? 'Building monospace glyphs in FontForge...'
+                        : 'Building proportional glyphs in FontForge...';
                 }, 3000);
 
                 const stepTimer3 = setTimeout(() => {
