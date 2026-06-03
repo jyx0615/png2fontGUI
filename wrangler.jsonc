@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "png2font-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "account_id": "d6986a74d4b35115c7bb37513ee68acd",
+
+  // CRITICAL: This flag allows the runtime to use Node modules like node:path
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 1. Configure the Container Object
+  "containers": [
+    {
+      "name": "png2font",
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+    },
+  ],
+
+  // 2. Link the Container Instance to a Durable Object class
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "png2font",
+        "class_name": "Sandbox",
+      },
+    ],
+  },
+
+  // 3. Register the backing storage engine (required for initialization)
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Sandbox"],
+    },
+  ],
+}
