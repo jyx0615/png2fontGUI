@@ -3,7 +3,7 @@
   "name": "png2font-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
-  "account_id": "d6986a74d4b35115c7bb37513ee68acd",
+  "account_id": "984d944da959ca0c60f8851de69d951d",
 
   // CRITICAL: This flag allows the runtime to use Node modules like node:path
   "compatibility_flags": ["nodejs_compat"],
@@ -13,8 +13,8 @@
     {
       "name": "png2font",
       "class_name": "Sandbox",
-      "image": "./Dockerfile",
-    },
+      "image": "./Dockerfile"
+    }
   ],
 
   // 2. Link the Container Instance to a Durable Object class
@@ -22,16 +22,16 @@
     "bindings": [
       {
         "name": "png2font",
-        "class_name": "Sandbox",
-      },
-    ],
+        "class_name": "Sandbox"
+      }
+    ]
   },
 
   // 3. Register the backing storage engine (required for initialization)
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["Sandbox"],
-    },
-  ],
+      "new_sqlite_classes": ["Sandbox"]
+    }
+  ]
 }

@@ -288,7 +288,7 @@
         // Handle File Addition
         function handleFiles(files) {
             Array.from(files).forEach(file => {
-                if (file.type !== "image/png" && !file.name.toLowerCase().endswith('.png')) return;
+                if (file.type !== "image/png" && !file.name.toLowerCase().endsWith('.png')) return;
                 
                 // Avoid duplicates
                 if (uploadedFiles.some(f => f.name === file.name)) return;

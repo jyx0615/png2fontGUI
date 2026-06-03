@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="png2font API",
-    description="Convert PNG glyphs into a monospace TTF font with embedded SVG outlines.",
+    description="Convert PNG glyphs into a TTF font with optional embedded SVG outlines.",
     version="1.0.0",
 )
 
@@ -37,6 +37,7 @@ app.add_middleware(
 # Import png2svg conversion function
 from png2svg import convert_pngs_to_svgs
 
+
 # Helper to remove a directory tree
 def cleanup_temp_dir(temp_dir_path: str):
     try:
@@ -46,20 +47,25 @@ def cleanup_temp_dir(temp_dir_path: str):
     except Exception as e:
         logger.error(f"Error cleaning up temporary workspace {temp_dir_path}: {e}")
 
+
 @app.post("/api/generate-font", summary="Convert uploaded PNG glyphs to a TTF font")
 async def generate_font(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(
         ...,
-        description="List of PNG glyph files. File names must reflect their characters (e.g. 'A.png' or hex codepoints 'u0041.png')"
+        description="List of PNG glyph files. File names must reflect their characters (e.g. 'A.png' or hex codepoints 'u0041.png')",
     ),
     fontname: str = Form("MyCustomFont", description="Sleek, URL-safe font identifier"),
     fullname: str = Form("My Custom Font", description="Full display name of the font"),
     familyname: str = Form("My Family", description="Font family name group"),
     upm: int = Form(1000, description="Units per EM (square canvas height/width)"),
-    advance_width: int = Form(600, description="Monospace advance character width"),
-    vertical_raise: int = Form(120, description="Baseline raise offset to align glyphs"),
-    monospace: bool = Form(True, description="Whether to generate a monospace font"),
+    advance_width: int = Form(
+        600, description="Advance character width (used if monospace)"
+    ),
+    vertical_raise: int = Form(
+        120, description="Baseline raise offset to align glyphs"
+    ),
+    monospace: bool = Form(False, description="Whether to generate a monospace font"),
 ):
     # Validate uploaded files are PNGs
     for file in files:
@@ -67,7 +73,7 @@ async def generate_font(
         if not filename.lower().endswith(".png"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid file format: {file.filename}. Only PNG files are supported."
+                detail=f"Invalid file format: {file.filename}. Only PNG files are supported.",
             )
 
     # 1. Create a unique isolated temporary workspace
@@ -88,7 +94,7 @@ async def generate_font(
             file_path = png_folder / filename
             with file_path.open("wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-        
+
         logger.info(f"Saved {len(files)} PNGs to temporary workspace.")
 
         # 3. Run PNG to SVG tracing conversion
@@ -100,29 +106,40 @@ async def generate_font(
         output_ttf_path = os.path.join(temp_dir, output_ttf_filename)
 
         fontforge_cmd = [
-            "fontforge", "-script", "font.py",
+            "fontforge",
+            "-script",
+            "font.py",
             str(svg_folder),
-            "--output", output_ttf_path,
-            "--fontname", fontname,
-            "--fullname", fullname,
-            "--familyname", familyname,
-            "--upm", str(upm),
-            "--advance-width", str(advance_width),
-            "--vertical-raise", str(vertical_raise)
+            "--output",
+            output_ttf_path,
+            "--fontname",
+            fontname,
+            "--fullname",
+            fullname,
+            "--familyname",
+            familyname,
+            "--upm",
+            str(upm),
+            "--advance-width",
+            str(advance_width),
+            "--vertical-raise",
+            str(vertical_raise),
         ]
         if monospace:
             fontforge_cmd.append("--monospace")
 
         logger.info(f"Executing FontForge: {' '.join(fontforge_cmd)}")
-        ff_res = subprocess.run(fontforge_cmd, capture_output=True, text=True, check=False)
-        
+        ff_res = subprocess.run(
+            fontforge_cmd, capture_output=True, text=True, check=False
+        )
+
         if ff_res.returncode != 0:
             logger.error(f"FontForge failed with error: {ff_res.stderr}")
             raise HTTPException(
                 status_code=500,
-                detail=f"FontForge compilation failed: {ff_res.stderr or ff_res.stdout}"
+                detail=f"FontForge compilation failed: {ff_res.stderr or ff_res.stdout}",
             )
-        
+
         logger.info("FontForge TTF generation completed successfully.")
 
         # 5. Embed SVG outlines back into the TTF using addsvg
@@ -131,26 +148,28 @@ async def generate_font(
         addsvg_cmd = [addsvg_bin, str(svg_folder), output_ttf_path]
 
         logger.info(f"Executing addsvg: {' '.join(addsvg_cmd)}")
-        addsvg_res = subprocess.run(addsvg_cmd, capture_output=True, text=True, check=False)
+        addsvg_res = subprocess.run(
+            addsvg_cmd, capture_output=True, text=True, check=False
+        )
 
         if addsvg_res.returncode != 0:
             # We can log this but still return the TTF since TTF is technically generated
-            logger.warning(f"addsvg failed with error (Color outlines might be skipped): {addsvg_res.stderr}")
+            logger.warning(
+                f"addsvg failed with error (Color outlines might be skipped): {addsvg_res.stderr}"
+            )
         else:
             logger.info("Successfully embedded color SVG outlines into the TTF.")
 
         if not os.path.exists(output_ttf_path):
             raise HTTPException(
                 status_code=500,
-                detail="TTF generation succeeded but the output file could not be found."
+                detail="TTF generation succeeded but the output file could not be found.",
             )
 
         # 6. Return the file as response, clean up when completed
         background_tasks.add_task(cleanup_temp_dir, temp_dir)
         return FileResponse(
-            path=output_ttf_path,
-            filename=output_ttf_filename,
-            media_type="font/ttf"
+            path=output_ttf_path, filename=output_ttf_filename, media_type="font/ttf"
         )
 
     except HTTPException:
@@ -160,10 +179,8 @@ async def generate_font(
     except Exception as e:
         cleanup_temp_dir(temp_dir)
         logger.exception("Unexpected error during font generation:")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
 
 # Fallback UI serve (GET /)
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -171,10 +188,9 @@ async def serve_index():
     index_path = Path("static/index.html")
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    
+
     # Elegant fallback page in case static files are loading
-    return HTMLResponse(
-        content="""
+    return HTMLResponse(content="""
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -239,8 +255,8 @@ async def serve_index():
             </div>
         </body>
         </html>
-        """
-    )
+        """)
+
 
 # Serve static directory if it exists
 if os.path.exists("static"):

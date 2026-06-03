@@ -5,7 +5,7 @@ export default {
   async fetch(request: Request, env: any): Promise<Response> {
     // 1. Instantiates or resumes your Docker container on the edge network
     // Change "global-session" to isolate instances per user if needed
-    const container = getSandbox(env.APP_CONTAINER, "global-session");
+    const container = getSandbox(env.png2font, "global-session");
 
     // 2. Clone the incoming request URL to point inside the container's internal port
     // Change 8080 to match whatever port your Dockerfile exposes
