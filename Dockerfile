@@ -34,7 +34,7 @@ RUN curl -sL https://github.com/RazrFalcon/svgcleaner/releases/download/v0.9.5/s
     | tar -xz -C /usr/local/bin/ svgcleaner && chmod +x /usr/local/bin/svgcleaner
 
 # Expose default API server port
-EXPOSE 8000
+EXPOSE 3000
 
 # Start Uvicorn engine
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "3000"]

@@ -13,8 +13,8 @@
     {
       "name": "png2font",
       "class_name": "Sandbox",
-      "image": "./Dockerfile"
-    }
+      "image": "./Dockerfile",
+    },
   ],
 
   // 2. Link the Container Instance to a Durable Object class
@@ -22,16 +22,23 @@
     "bindings": [
       {
         "name": "png2font",
-        "class_name": "Sandbox"
-      }
-    ]
+        "class_name": "Sandbox",
+      },
+    ],
   },
 
   // 3. Register the backing storage engine (required for initialization)
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["Sandbox"]
-    }
-  ]
+      "new_sqlite_classes": ["Sandbox"],
+    },
+  ],
+  
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+    },
+  },
 }
