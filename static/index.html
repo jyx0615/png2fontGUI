@@ -515,19 +515,24 @@
 
                 // Generate unique Font Family name to inject dynamically
                 const customFontName = (fontnameInput.value || 'MyCustomFont') + '_' + Date.now();
-                
-                modalStatus.textContent = 'Injecting generated font...';
-                
-                // Inject custom FontFace dynamically into the web page!
-                const fontFace = new FontFace(customFontName, `url(${fontUrl})`);
-                await fontFace.load();
-                document.fonts.add(fontFace);
-                
-                // Configure Preview Font Fam
-                testText.style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
-                document.getElementById('charset-grid').style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
-                document.getElementById('preview-font-badge').textContent = fontnameInput.value;
-                testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 - MONOSPACE ALIGNMENT`;
+
+                modalStatus.textContent = 'Injecting WOFF font for preview...';
+
+                // Use WOFF font for preview
+                if (fontFiles.woff) {
+                    // Inject WOFF font dynamically into the web page!
+                    const fontFace = new FontFace(customFontName, `url(${fontFiles.woff.url})`, { format: 'woff' });
+                    await fontFace.load();
+                    document.fonts.add(fontFace);
+
+                    // Configure Preview Font Fam
+                    testText.style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
+                    document.getElementById('charset-grid').style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
+                    document.getElementById('preview-font-badge').textContent = fontnameInput.value;
+                    testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 !@#$%^&*()`;
+                } else {
+                    console.warn('WOFF font file not available for preview');
+                }
 
                 // Update download links
                 const downloadOriginal = document.getElementById('download-original');

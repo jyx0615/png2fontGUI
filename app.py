@@ -66,7 +66,7 @@ def cleanup_temp_dir(temp_dir_path: str):
         500: {"description": "Server error during font generation"},
     },
 )
-async def generate_font(
+def generate_font(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(
         ...,
@@ -201,17 +201,17 @@ async def generate_font(
                 str(output_ttf_path),
             ]
             logger.info(f"Executing maximum_color: {' '.join(maximum_color_cmd)}")
-            maximum_color_proc = await asyncio.create_subprocess_exec(
-                *maximum_color_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            mc_res = subprocess.run(
+                maximum_color_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
                 cwd=str(nanoemoji_dir),
             )
-            mc_stdout, mc_stderr = await maximum_color_proc.communicate()
 
-            if maximum_color_proc.returncode != 0:
+            if mc_res.returncode != 0:
                 logger.warning(
-                    f"maximum_color failed with error: {mc_stderr.decode()}"
+                    f"maximum_color failed with error: {mc_res.stderr}"
                 )
                 # Fallback to using original TTF if maximum_color fails
                 shutil.copy(output_ttf_path, output_ttf_color_path)
@@ -237,16 +237,16 @@ async def generate_font(
 
         ttf2woff_cmd = ["ttf2woff", font_ttf_input, output_woff_path]
         logger.info(f"Executing ttf2woff: {' '.join(ttf2woff_cmd)}")
-        ttf2woff_proc = await asyncio.create_subprocess_exec(
-            *ttf2woff_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        ttf2woff_res = subprocess.run(
+            ttf2woff_cmd,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        ttf2woff_stdout, ttf2woff_stderr = await ttf2woff_proc.communicate()
 
-        if ttf2woff_proc.returncode != 0:
+        if ttf2woff_res.returncode != 0:
             logger.warning(
-                f"ttf2woff failed with error: {ttf2woff_stderr.decode()}"
+                f"ttf2woff failed with error: {ttf2woff_res.stderr}"
             )
 
         # 9. Create ZIP file with all three font files
