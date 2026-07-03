@@ -169,8 +169,7 @@
                 <div class="step-item" id="step-trace"><span class="step-dot"></span> Tracing PNGs to SVG contours</div>
                 <div class="step-item" id="step-compile"><span class="step-dot"></span> Building TTF with FontForge</div>
                 <div class="step-item" id="step-embed"><span class="step-dot"></span> Embedding color vector shapes</div>
-                <div class="step-item" id="step-color"><span class="step-dot"></span> Optimizing colors with nanoemoji</div>
-                <div class="step-item" id="step-woff"><span class="step-dot"></span> Converting to WOFF format</div>
+                <div class="step-item" id="step-optimize"><span class="step-dot"></span> Optimizing with nanoemoji & converting to WOFF</div>
             </div>
         </div>
     </div>
@@ -202,8 +201,7 @@
             <div class="download-section">
                 <h3>Download Font Files</h3>
                 <div class="download-buttons">
-                    <a href="#" id="download-original" class="btn btn-secondary" download><i data-lucide="download"></i> Original TTF</a>
-                    <a href="#" id="download-color" class="btn btn-secondary" download><i data-lucide="download"></i> Color TTF</a>
+                    <a href="#" id="download-ttf" class="btn btn-secondary" download><i data-lucide="download"></i> Color-Optimized TTF</a>
                     <a href="#" id="download-woff" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF Font</a>
                 </div>
             </div>
@@ -458,14 +456,9 @@
                 }, 6000);
 
                 const stepTimer4 = setTimeout(() => {
-                    setStepActive('step-color');
-                    modalStatus.textContent = 'Optimizing colors with nanoemoji...';
+                    setStepActive('step-optimize');
+                    modalStatus.textContent = 'Optimizing with nanoemoji and converting to WOFF...';
                 }, 9000);
-
-                const stepTimer5 = setTimeout(() => {
-                    setStepActive('step-woff');
-                    modalStatus.textContent = 'Converting to WOFF format...';
-                }, 11000);
 
                 const apiBase = document.getElementById('api-base-url').value.trim().replace(/\/$/, '') || '';
                 const response = await fetch(`${apiBase}/api/generate-font`, {
@@ -478,7 +471,6 @@
                 clearTimeout(stepTimer2);
                 clearTimeout(stepTimer3);
                 clearTimeout(stepTimer4);
-                clearTimeout(stepTimer5);
 
                 if (!response.ok) {
                     const err = await response.json();
@@ -491,8 +483,7 @@
                 // Extract ZIP file
                 const zip = await JSZip.loadAsync(zipBlob);
                 let fontFiles = {
-                    original: null,
-                    color: null,
+                    ttf: null,
                     woff: null
                 };
 
@@ -501,10 +492,8 @@
                     const fileData = await zip.files[filename].async('blob');
                     const fileUrl = URL.createObjectURL(fileData);
 
-                    if (filename.includes('_original.ttf')) {
-                        fontFiles.original = { blob: fileData, url: fileUrl, name: filename };
-                    } else if (filename.includes('_color.ttf')) {
-                        fontFiles.color = { blob: fileData, url: fileUrl, name: filename };
+                    if (filename.endsWith('.ttf')) {
+                        fontFiles.ttf = { blob: fileData, url: fileUrl, name: filename };
                     } else if (filename.endsWith('.woff')) {
                         fontFiles.woff = { blob: fileData, url: fileUrl, name: filename };
                     }
@@ -535,24 +524,15 @@
                 }
 
                 // Update download links
-                const downloadOriginal = document.getElementById('download-original');
-                const downloadColor = document.getElementById('download-color');
+                const downloadTtf = document.getElementById('download-ttf');
                 const downloadWoff = document.getElementById('download-woff');
 
-                if (fontFiles.original) {
-                    downloadOriginal.href = fontFiles.original.url;
-                    downloadOriginal.download = fontFiles.original.name;
-                    downloadOriginal.style.display = 'inline-block';
+                if (fontFiles.ttf) {
+                    downloadTtf.href = fontFiles.ttf.url;
+                    downloadTtf.download = fontFiles.ttf.name;
+                    downloadTtf.style.display = 'inline-block';
                 } else {
-                    downloadOriginal.style.display = 'none';
-                }
-
-                if (fontFiles.color) {
-                    downloadColor.href = fontFiles.color.url;
-                    downloadColor.download = fontFiles.color.name;
-                    downloadColor.style.display = 'inline-block';
-                } else {
-                    downloadColor.style.display = 'none';
+                    downloadTtf.style.display = 'none';
                 }
 
                 if (fontFiles.woff) {

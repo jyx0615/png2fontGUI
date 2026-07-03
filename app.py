@@ -55,11 +55,11 @@ def cleanup_temp_dir(temp_dir_path: str):
 
 @app.post(
     "/api/generate-font",
-    summary="Convert PNG glyphs into font files (TTF + WOFF)",
-    description="Converts PNG glyph images into three font formats: original TTF (with SVG outlines), color-optimized TTF (via nanoemoji), and WOFF web font. Returns a ZIP archive containing all three files.",
+    summary="Convert PNG glyphs into TTF and WOFF fonts",
+    description="Converts PNG glyph images into two optimized font formats: color-optimized TTF (via nanoemoji) and WOFF web font. Returns a ZIP archive containing both files.",
     responses={
         200: {
-            "description": "ZIP archive containing three font files",
+            "description": "ZIP archive containing TTF and WOFF font files",
             "content": {"application/zip": {"example": "fontname_fonts.zip"}},
         },
         400: {"description": "Invalid input (non-PNG files or missing required fields)"},
@@ -183,13 +183,7 @@ def generate_font(
                 detail="TTF generation succeeded but the output file could not be found.",
             )
 
-        # 6. Save original TTF before processing
-        output_ttf_original_filename = f"{fontname}_original.ttf"
-        output_ttf_original_path = os.path.join(temp_dir, output_ttf_original_filename)
-        shutil.copy(output_ttf_path, output_ttf_original_path)
-        logger.info("Saved original TTF file.")
-
-        # 7. Run maximum_color from nanoemoji to add color information
+        # 6. Run maximum_color from nanoemoji to add color information
         nanoemoji_dir = Path("nanoemoji")
         output_ttf_color_filename = f"{fontname}_color.ttf"
         output_ttf_color_path = os.path.join(temp_dir, output_ttf_color_filename)
@@ -228,7 +222,7 @@ def generate_font(
             logger.warning("nanoemoji directory not found, using original TTF")
             shutil.copy(output_ttf_path, output_ttf_color_path)
 
-        # 8. Convert TTF to WOFF using nanoemoji output
+        # 7. Convert TTF to WOFF using nanoemoji output
         font_ttf_input = os.path.join(temp_dir, "font.ttf")
         shutil.copy(output_ttf_color_path, font_ttf_input)
 
@@ -249,20 +243,15 @@ def generate_font(
                 f"ttf2woff failed with error: {ttf2woff_res.stderr}"
             )
 
-        # 9. Create ZIP file with all three font files
+        # 8. Create ZIP file with color-optimized TTF and WOFF
         output_zip_filename = f"{fontname}_fonts.zip"
         output_zip_path = os.path.join(temp_dir, output_zip_filename)
 
         with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Add original TTF
-            if os.path.exists(output_ttf_original_path):
-                zf.write(output_ttf_original_path, arcname=f"{fontname}_original.ttf")
-                logger.info(f"Added {fontname}_original.ttf to zip")
-
             # Add color-optimized TTF
             if os.path.exists(output_ttf_color_path):
-                zf.write(output_ttf_color_path, arcname=f"{fontname}_color.ttf")
-                logger.info(f"Added {fontname}_color.ttf to zip")
+                zf.write(output_ttf_color_path, arcname=f"{fontname}.ttf")
+                logger.info(f"Added {fontname}.ttf to zip")
 
             # Add WOFF if conversion succeeded
             if os.path.exists(output_woff_path):
@@ -271,7 +260,7 @@ def generate_font(
 
         logger.info(f"Created ZIP archive: {output_zip_filename}")
 
-        # 10. Return the ZIP file as response, clean up when completed
+        # 9. Return the ZIP file as response, clean up when completed
         background_tasks.add_task(cleanup_temp_dir, temp_dir)
         return FileResponse(
             path=output_zip_path, filename=output_zip_filename, media_type="application/zip"
