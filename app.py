@@ -53,24 +53,36 @@ def cleanup_temp_dir(temp_dir_path: str):
         logger.error(f"Error cleaning up temporary workspace {temp_dir_path}: {e}")
 
 
-@app.post("/api/generate-font", summary="Convert uploaded PNG glyphs to a TTF font")
+@app.post(
+    "/api/generate-font",
+    summary="Convert PNG glyphs into font files (TTF + WOFF)",
+    description="Converts PNG glyph images into three font formats: original TTF (with SVG outlines), color-optimized TTF (via nanoemoji), and WOFF web font. Returns a ZIP archive containing all three files.",
+    responses={
+        200: {
+            "description": "ZIP archive containing three font files",
+            "content": {"application/zip": {"example": "fontname_fonts.zip"}},
+        },
+        400: {"description": "Invalid input (non-PNG files or missing required fields)"},
+        500: {"description": "Server error during font generation"},
+    },
+)
 async def generate_font(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(
         ...,
         description="List of PNG glyph files. File names must reflect their characters (e.g. 'A.png' or hex codepoints 'u0041.png')",
     ),
-    fontname: str = Form("MyCustomFont", description="Sleek, URL-safe font identifier"),
-    fullname: str = Form("My Custom Font", description="Full display name of the font"),
-    familyname: str = Form("My Family", description="Font family name group"),
-    upm: int = Form(1000, description="Units per EM (square canvas height/width)"),
+    fontname: str = Form("MyCustomFont", description="URL-safe font identifier (used in filenames)"),
+    fullname: str = Form("My Custom Font", description="Full display name visible in font menus"),
+    familyname: str = Form("My Family", description="Font family name for grouping"),
+    upm: int = Form(1000, description="Units per EM - canvas grid size (500-2048)"),
     advance_width: int = Form(
-        600, description="Advance character width (used if monospace)"
+        600, description="Character advance width for monospace fonts (500-2048)"
     ),
     vertical_raise: int = Form(
-        120, description="Baseline raise offset to align glyphs"
+        120, description="Baseline vertical offset in units (-500 to 500)"
     ),
-    monospace: bool = Form(False, description="Whether to generate a monospace font"),
+    monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
 ):
     # Validate uploaded files are PNGs
     for file in files:
