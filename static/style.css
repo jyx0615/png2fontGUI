@@ -804,6 +804,33 @@ details[open] .chevron-icon {
     flex-wrap: wrap;
 }
 
+.download-section {
+    margin: 24px 0 20px;
+    padding: 20px;
+    background: rgba(37, 99, 235, 0.05);
+    border: 1px solid rgba(37, 99, 235, 0.1);
+    border-radius: var(--radius-sm);
+}
+
+.download-section h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text);
+}
+
+.download-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.download-buttons .btn {
+    text-align: center;
+    font-size: 0.9rem;
+    padding: 10px 16px;
+}
+
 .hidden {
     display: none !important;
 }

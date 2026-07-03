@@ -44,7 +44,7 @@ def create_empty_svg(
 UPSCALE_FACTOR = 4  # Lanczos upscale multiplier before tracing
 
 
-def _is_near_white(color: str, threshold: int = 230) -> bool:
+def _is_near_white(color: str, threshold: int = 256) -> bool:
     """Return True if `color` (CSS hex) is near-white."""
     c = color.strip().lstrip("#").lower()
     if c in ("fff", "ffffff", "white"):

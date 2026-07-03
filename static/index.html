@@ -10,6 +10,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <!-- FontAwesome/Lucide Icons via SVG or CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- JSZip for ZIP file extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -167,6 +169,8 @@
                 <div class="step-item" id="step-trace"><span class="step-dot"></span> Tracing PNGs to SVG contours</div>
                 <div class="step-item" id="step-compile"><span class="step-dot"></span> Building TTF with FontForge</div>
                 <div class="step-item" id="step-embed"><span class="step-dot"></span> Embedding color vector shapes</div>
+                <div class="step-item" id="step-color"><span class="step-dot"></span> Optimizing colors with nanoemoji</div>
+                <div class="step-item" id="step-woff"><span class="step-dot"></span> Converting to WOFF format</div>
             </div>
         </div>
     </div>
@@ -195,8 +199,16 @@
                 </div>
             </div>
 
+            <div class="download-section">
+                <h3>Download Font Files</h3>
+                <div class="download-buttons">
+                    <a href="#" id="download-original" class="btn btn-secondary" download><i data-lucide="download"></i> Original TTF</a>
+                    <a href="#" id="download-color" class="btn btn-secondary" download><i data-lucide="download"></i> Color TTF</a>
+                    <a href="#" id="download-woff" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF Font</a>
+                </div>
+            </div>
+
             <div class="modal-buttons">
-                <a href="#" id="download-link" class="btn btn-primary"><i data-lucide="download"></i> Download TTF</a>
                 <button class="btn btn-secondary" id="close-success-btn">Generate Another</button>
             </div>
         </div>
@@ -445,6 +457,16 @@
                     modalStatus.textContent = 'Embedding color vector outlines...';
                 }, 6000);
 
+                const stepTimer4 = setTimeout(() => {
+                    setStepActive('step-color');
+                    modalStatus.textContent = 'Optimizing colors with nanoemoji...';
+                }, 9000);
+
+                const stepTimer5 = setTimeout(() => {
+                    setStepActive('step-woff');
+                    modalStatus.textContent = 'Converting to WOFF format...';
+                }, 11000);
+
                 const apiBase = document.getElementById('api-base-url').value.trim().replace(/\/$/, '') || '';
                 const response = await fetch(`${apiBase}/api/generate-font`, {
                     method: 'POST',
@@ -455,19 +477,42 @@
                 clearTimeout(stepTimer1);
                 clearTimeout(stepTimer2);
                 clearTimeout(stepTimer3);
+                clearTimeout(stepTimer4);
+                clearTimeout(stepTimer5);
 
                 if (!response.ok) {
                     const err = await response.json();
                     throw new Error(err.detail || 'Font generation failed on the server.');
                 }
 
-                // Retrieve Font Blob
-                const fontBlob = await response.blob();
-                const fontUrl = URL.createObjectURL(fontBlob);
-                
+                // Retrieve ZIP Blob
+                const zipBlob = await response.blob();
+
+                // Extract ZIP file
+                const zip = await JSZip.loadAsync(zipBlob);
+                let fontFiles = {
+                    original: null,
+                    color: null,
+                    woff: null
+                };
+
+                // Extract files from ZIP
+                for (const filename in zip.files) {
+                    const fileData = await zip.files[filename].async('blob');
+                    const fileUrl = URL.createObjectURL(fileData);
+
+                    if (filename.includes('_original.ttf')) {
+                        fontFiles.original = { blob: fileData, url: fileUrl, name: filename };
+                    } else if (filename.includes('_color.ttf')) {
+                        fontFiles.color = { blob: fileData, url: fileUrl, name: filename };
+                    } else if (filename.endsWith('.woff')) {
+                        fontFiles.woff = { blob: fileData, url: fileUrl, name: filename };
+                    }
+                }
+
                 // Complete all steps in UI
                 document.querySelectorAll('.step-item').forEach(el => el.classList.add('completed'));
-                
+
                 // Generate unique Font Family name to inject dynamically
                 const customFontName = (fontnameInput.value || 'MyCustomFont') + '_' + Date.now();
                 
@@ -484,9 +529,34 @@
                 document.getElementById('preview-font-badge').textContent = fontnameInput.value;
                 testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 - MONOSPACE ALIGNMENT`;
 
-                // Update download link
-                downloadLink.href = fontUrl;
-                downloadLink.download = `${fontnameInput.value || 'font'}.ttf`;
+                // Update download links
+                const downloadOriginal = document.getElementById('download-original');
+                const downloadColor = document.getElementById('download-color');
+                const downloadWoff = document.getElementById('download-woff');
+
+                if (fontFiles.original) {
+                    downloadOriginal.href = fontFiles.original.url;
+                    downloadOriginal.download = fontFiles.original.name;
+                    downloadOriginal.style.display = 'inline-block';
+                } else {
+                    downloadOriginal.style.display = 'none';
+                }
+
+                if (fontFiles.color) {
+                    downloadColor.href = fontFiles.color.url;
+                    downloadColor.download = fontFiles.color.name;
+                    downloadColor.style.display = 'inline-block';
+                } else {
+                    downloadColor.style.display = 'none';
+                }
+
+                if (fontFiles.woff) {
+                    downloadWoff.href = fontFiles.woff.url;
+                    downloadWoff.download = fontFiles.woff.name;
+                    downloadWoff.style.display = 'inline-block';
+                } else {
+                    downloadWoff.style.display = 'none';
+                }
 
                 // Transpose to success modal
                 loadingModal.classList.add('hidden');

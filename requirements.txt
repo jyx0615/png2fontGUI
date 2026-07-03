@@ -1,3 +1,6 @@
 vtracer==0.6.15
 opentypesvg==1.1.5
 Pillow>=10.0.0
+uvicorn>=0.22.0
+fastapi>=0.100.0
+python-multipart>=0.0.3

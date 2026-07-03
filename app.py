@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import subprocess
 import logging
+import zipfile
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -35,6 +36,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
 )
 
 # Import png2svg conversion function
@@ -169,10 +171,98 @@ async def generate_font(
                 detail="TTF generation succeeded but the output file could not be found.",
             )
 
-        # 6. Return the file as response, clean up when completed
+        # 6. Save original TTF before processing
+        output_ttf_original_filename = f"{fontname}_original.ttf"
+        output_ttf_original_path = os.path.join(temp_dir, output_ttf_original_filename)
+        shutil.copy(output_ttf_path, output_ttf_original_path)
+        logger.info("Saved original TTF file.")
+
+        # 7. Run maximum_color from nanoemoji to add color information
+        nanoemoji_dir = Path("nanoemoji")
+        output_ttf_color_filename = f"{fontname}_color.ttf"
+        output_ttf_color_path = os.path.join(temp_dir, output_ttf_color_filename)
+
+        if nanoemoji_dir.exists():
+            maximum_color_cmd = [
+                "maximum_color",
+                "--bitmaps",
+                str(output_ttf_path),
+            ]
+            logger.info(f"Executing maximum_color: {' '.join(maximum_color_cmd)}")
+            maximum_color_proc = await asyncio.create_subprocess_exec(
+                *maximum_color_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(nanoemoji_dir),
+            )
+            mc_stdout, mc_stderr = await maximum_color_proc.communicate()
+
+            if maximum_color_proc.returncode != 0:
+                logger.warning(
+                    f"maximum_color failed with error: {mc_stderr.decode()}"
+                )
+                # Fallback to using original TTF if maximum_color fails
+                shutil.copy(output_ttf_path, output_ttf_color_path)
+            else:
+                # Copy the output from nanoemoji/build/Font.ttf to temp directory
+                nanoemoji_output = nanoemoji_dir / "build" / "Font.ttf"
+                if nanoemoji_output.exists():
+                    shutil.copy(nanoemoji_output, output_ttf_color_path)
+                    logger.info("Successfully applied maximum_color optimization.")
+                else:
+                    logger.warning(f"nanoemoji output not found at {nanoemoji_output}, using original TTF")
+                    shutil.copy(output_ttf_path, output_ttf_color_path)
+        else:
+            logger.warning("nanoemoji directory not found, using original TTF")
+            shutil.copy(output_ttf_path, output_ttf_color_path)
+
+        # 8. Convert TTF to WOFF using nanoemoji output
+        font_ttf_input = os.path.join(temp_dir, "font.ttf")
+        shutil.copy(output_ttf_color_path, font_ttf_input)
+
+        output_woff_filename = f"{fontname}.woff"
+        output_woff_path = os.path.join(temp_dir, output_woff_filename)
+
+        ttf2woff_cmd = ["ttf2woff", font_ttf_input, output_woff_path]
+        logger.info(f"Executing ttf2woff: {' '.join(ttf2woff_cmd)}")
+        ttf2woff_proc = await asyncio.create_subprocess_exec(
+            *ttf2woff_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        ttf2woff_stdout, ttf2woff_stderr = await ttf2woff_proc.communicate()
+
+        if ttf2woff_proc.returncode != 0:
+            logger.warning(
+                f"ttf2woff failed with error: {ttf2woff_stderr.decode()}"
+            )
+
+        # 9. Create ZIP file with all three font files
+        output_zip_filename = f"{fontname}_fonts.zip"
+        output_zip_path = os.path.join(temp_dir, output_zip_filename)
+
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add original TTF
+            if os.path.exists(output_ttf_original_path):
+                zf.write(output_ttf_original_path, arcname=f"{fontname}_original.ttf")
+                logger.info(f"Added {fontname}_original.ttf to zip")
+
+            # Add color-optimized TTF
+            if os.path.exists(output_ttf_color_path):
+                zf.write(output_ttf_color_path, arcname=f"{fontname}_color.ttf")
+                logger.info(f"Added {fontname}_color.ttf to zip")
+
+            # Add WOFF if conversion succeeded
+            if os.path.exists(output_woff_path):
+                zf.write(output_woff_path, arcname=output_woff_filename)
+                logger.info(f"Added {output_woff_filename} to zip")
+
+        logger.info(f"Created ZIP archive: {output_zip_filename}")
+
+        # 10. Return the ZIP file as response, clean up when completed
         background_tasks.add_task(cleanup_temp_dir, temp_dir)
         return FileResponse(
-            path=output_ttf_path, filename=output_ttf_filename, media_type="font/ttf"
+            path=output_zip_path, filename=output_zip_filename, media_type="application/zip"
         )
 
     except HTTPException:
