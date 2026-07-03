@@ -1,12 +1,17 @@
+import json
 import os
+import re
 import shutil
 import tempfile
+import threading
+import time
 import subprocess
 import logging
+import uuid
 import zipfile
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Setup logging
@@ -53,72 +58,135 @@ def cleanup_temp_dir(temp_dir_path: str):
         logger.error(f"Error cleaning up temporary workspace {temp_dir_path}: {e}")
 
 
-@app.post(
-    "/api/generate-font",
-    summary="Convert PNG glyphs into TTF and WOFF fonts",
-    description="Converts PNG glyph images into two optimized font formats: color-optimized TTF (via nanoemoji) and WOFF web font. Returns a ZIP archive containing both files.",
-    responses={
-        200: {
-            "description": "ZIP archive containing TTF and WOFF font files",
-            "content": {"application/zip": {"example": "fontname_fonts.zip"}},
-        },
-        400: {"description": "Invalid input (non-PNG files or missing required fields)"},
-        500: {"description": "Server error during font generation"},
-    },
-)
-def generate_font(
-    background_tasks: BackgroundTasks,
-    files: list[UploadFile] = File(
-        ...,
-        description="List of PNG glyph files. File names must reflect their characters (e.g. 'A.png' or hex codepoints 'u0041.png')",
-    ),
-    fontname: str = Form("MyCustomFont", description="URL-safe font identifier (used in filenames)"),
-    fullname: str = Form("My Custom Font", description="Full display name visible in font menus"),
-    familyname: str = Form("My Family", description="Font family name for grouping"),
-    upm: int = Form(1000, description="Units per EM - canvas grid size (500-2048)"),
-    advance_width: int = Form(
-        600, description="Character advance width for monospace fonts (500-2048)"
-    ),
-    vertical_raise: int = Form(
-        120, description="Baseline vertical offset in units (-500 to 500)"
-    ),
-    monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
-):
-    # Validate uploaded files are PNGs
-    for file in files:
-        filename = os.path.basename(file.filename)
-        if not filename.lower().endswith(".png"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file format: {file.filename}. Only PNG files are supported.",
-            )
+# ─── Job store ────────────────────────────────────────────────────────────────
+# Generation takes minutes, far longer than proxies in front of this server
+# allow a request to stay open (Cloudflare tunnels cut it at ~100s → 524).
+# So POST /api/generate-font only enqueues: it saves the uploads, spawns a
+# worker thread, and returns a job_id immediately. Clients poll
+# GET /api/job/{id} and download the ZIP from GET /api/job/{id}/result.
+#
+# Job state lives on the filesystem (status.json per job) so it survives
+# uvicorn --reload restarts and works with multiple workers.
 
-    # 1. Create a unique isolated temporary workspace
-    temp_dir = tempfile.mkdtemp()
+JOBS_ROOT = Path(tempfile.gettempdir()) / "png2font_jobs"
+JOB_TTL_SECONDS = 2 * 60 * 60  # keep results around for 2 hours
+JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+HEARTBEAT_SECONDS = 15
+# A processing job whose status hasn't been touched for this long has a dead
+# worker thread (heartbeats refresh updated_at every HEARTBEAT_SECONDS).
+ORPHAN_STALE_SECONDS = 90
+
+# Serializes read-modify-write of status.json between the pipeline thread and
+# its heartbeat thread, so a heartbeat can never resurrect a terminal status.
+_status_write_lock = threading.Lock()
+
+
+def job_dir(job_id: str) -> Path:
+    return JOBS_ROOT / job_id
+
+
+def write_job_status(job_id: str, **fields):
+    d = job_dir(job_id)
+    d.mkdir(parents=True, exist_ok=True)
+    status_path = d / "status.json"
+    with _status_write_lock:
+        current = read_job_status(job_id) or {}
+        current.update(fields)
+        current["updated_at"] = time.time()
+        tmp = status_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(current))
+        tmp.replace(status_path)
+
+
+def read_job_status(job_id: str):
+    try:
+        return json.loads((job_dir(job_id) / "status.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def sweep_stale_jobs():
+    """Delete job workspaces older than the TTL. Called on each new submission."""
+    if not JOBS_ROOT.exists():
+        return
+    cutoff = time.time() - JOB_TTL_SECONDS
+    for d in JOBS_ROOT.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                logger.info(f"Swept stale job workspace: {d.name}")
+        except OSError:
+            pass
+
+
+def fail_orphaned_jobs():
+    """Worker threads die with the process (server restart / --reload), leaving
+    their jobs stuck in queued/processing forever — and clients polling them
+    forever. A live worker heartbeats status.json every HEARTBEAT_SECONDS, so a
+    non-terminal job with a stale updated_at has no thread behind it: mark it
+    failed so pollers get a definitive answer. Called at startup and lazily
+    from the status endpoint."""
+    if not JOBS_ROOT.exists():
+        return
+    cutoff = time.time() - ORPHAN_STALE_SECONDS
+    for d in JOBS_ROOT.iterdir():
+        if not d.is_dir():
+            continue
+        status = read_job_status(d.name)
+        if (
+            status
+            and status.get("status") in ("queued", "processing")
+            and status.get("updated_at", 0) < cutoff
+        ):
+            write_job_status(
+                d.name,
+                status="failed",
+                phase="error",
+                detail="The font server restarted during generation — please export again.",
+            )
+            logger.warning(f"Marked orphaned job as failed: {d.name}")
+
+
+fail_orphaned_jobs()
+
+
+def run_generation_job(
+    job_id: str,
+    fontname: str,
+    fullname: str,
+    familyname: str,
+    upm: int,
+    advance_width: int,
+    vertical_raise: int,
+    monospace: bool,
+):
+    """Worker-thread body: runs the full pipeline, updating status.json as it goes."""
+    temp_dir = str(job_dir(job_id))
     png_folder = Path(temp_dir) / "png_glyphs"
     svg_folder = Path(temp_dir) / "svg_glyphs"
-
-    png_folder.mkdir(parents=True, exist_ok=True)
     svg_folder.mkdir(parents=True, exist_ok=True)
 
+    # Heartbeat: refresh updated_at while the pipeline runs so pollers can
+    # tell a slow phase (nanoemoji can take 20+ minutes) from a dead thread.
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat():
+        while not stop_heartbeat.wait(HEARTBEAT_SECONDS):
+            try:
+                write_job_status(job_id)
+            except Exception:
+                pass
+
+    threading.Thread(target=_heartbeat, daemon=True).start()
+
     try:
-        # 2. Write uploaded PNGs to the temp folder
-        for file in files:
-            filename = os.path.basename(file.filename)
-            if not filename or filename == ".png":
-                # If name is empty or only extension, fallback to a safe name
-                filename = "glyph.png"
-            file_path = png_folder / filename
-            with file_path.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-        logger.info(f"Saved {len(files)} PNGs to temporary workspace.")
-
-        # 3. Run PNG to SVG tracing conversion
+        # 1. Run PNG to SVG tracing conversion
+        write_job_status(job_id, status="processing", phase="tracing", detail="Tracing PNGs to SVG outlines")
         convert_pngs_to_svgs(png_folder, svg_folder, target_upm=upm)
         logger.info("PNG to SVG conversion completed.")
 
-        # 4. Generate TTF using FontForge
+        # 2. Generate TTF using FontForge
+        write_job_status(job_id, phase="fontforge", detail="Compiling TTF with FontForge")
         output_ttf_filename = f"{fontname}.ttf"
         output_ttf_path = os.path.join(temp_dir, output_ttf_filename)
 
@@ -152,9 +220,8 @@ def generate_font(
 
         if ff_res.returncode != 0:
             logger.error(f"FontForge failed with error: {ff_res.stderr}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"FontForge compilation failed: {ff_res.stderr or ff_res.stdout}",
+            raise RuntimeError(
+                f"FontForge compilation failed: {ff_res.stderr or ff_res.stdout}"
             )
 
         logger.info("FontForge TTF generation completed successfully.")
@@ -178,51 +245,76 @@ def generate_font(
             logger.info("Successfully embedded color SVG outlines into the TTF.")
 
         if not os.path.exists(output_ttf_path):
-            raise HTTPException(
-                status_code=500,
-                detail="TTF generation succeeded but the output file could not be found.",
+            raise RuntimeError(
+                "TTF generation succeeded but the output file could not be found."
             )
 
-        # 6. Run maximum_color from nanoemoji to add color information
+        # 4. Run maximum_color from nanoemoji to add color information
+        write_job_status(job_id, phase="color-optimize", detail="Embedding color layers (nanoemoji)")
         nanoemoji_dir = Path("nanoemoji")
         output_ttf_color_filename = f"{fontname}_color.ttf"
         output_ttf_color_path = os.path.join(temp_dir, output_ttf_color_filename)
 
         if nanoemoji_dir.exists():
+            # Run with cwd=<job workspace> so nanoemoji's build/ output is
+            # per-job — with the shared nanoemoji/build dir, concurrent jobs
+            # clobber each other's Font.ttf. Stream the output line by line:
+            # this phase can run 20+ minutes and used to be completely silent
+            # (and its failures invisible — it silently fell back to the
+            # non-color TTF). Full output is kept in <job>/nanoemoji.log.
             maximum_color_cmd = [
                 "maximum_color",
                 "--bitmaps",
                 str(output_ttf_path),
             ]
-            logger.info(f"Executing maximum_color: {' '.join(maximum_color_cmd)}")
-            mc_res = subprocess.run(
-                maximum_color_cmd,
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=str(nanoemoji_dir),
-            )
+            mc_log_path = Path(temp_dir) / "nanoemoji.log"
+            logger.info(f"Executing maximum_color: {' '.join(maximum_color_cmd)} (full log: {mc_log_path})")
+            last_line = ""
+            last_status_write = 0.0
+            with mc_log_path.open("w") as mc_log:
+                mc_proc = subprocess.Popen(
+                    maximum_color_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=temp_dir,
+                )
+                for raw_line in mc_proc.stdout:
+                    mc_log.write(raw_line)
+                    mc_log.flush()
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    last_line = line
+                    logger.info(f"[nanoemoji {job_id[:8]}] {line}")
+                    # Surface progress to pollers, throttled to every 2s.
+                    if time.time() - last_status_write > 2:
+                        write_job_status(job_id, detail=f"nanoemoji: {line[:200]}")
+                        last_status_write = time.time()
+                mc_proc.wait()
 
-            if mc_res.returncode != 0:
+            nanoemoji_output = Path(temp_dir) / "build" / "Font.ttf"
+            if mc_proc.returncode == 0 and nanoemoji_output.exists():
+                shutil.copy(nanoemoji_output, output_ttf_color_path)
+                logger.info("Successfully applied maximum_color optimization.")
+            else:
                 logger.warning(
-                    f"maximum_color failed with error: {mc_res.stderr}"
+                    f"maximum_color failed (exit {mc_proc.returncode}); "
+                    f"last output: {last_line!r} — falling back to non-color TTF. "
+                    f"Full log: {mc_log_path}"
+                )
+                write_job_status(
+                    job_id,
+                    detail=f"nanoemoji failed (exit {mc_proc.returncode}) — continuing with non-color TTF",
                 )
                 # Fallback to using original TTF if maximum_color fails
                 shutil.copy(output_ttf_path, output_ttf_color_path)
-            else:
-                # Copy the output from nanoemoji/build/Font.ttf to temp directory
-                nanoemoji_output = nanoemoji_dir / "build" / "Font.ttf"
-                if nanoemoji_output.exists():
-                    shutil.copy(nanoemoji_output, output_ttf_color_path)
-                    logger.info("Successfully applied maximum_color optimization.")
-                else:
-                    logger.warning(f"nanoemoji output not found at {nanoemoji_output}, using original TTF")
-                    shutil.copy(output_ttf_path, output_ttf_color_path)
         else:
             logger.warning("nanoemoji directory not found, using original TTF")
             shutil.copy(output_ttf_path, output_ttf_color_path)
 
-        # 7. Convert TTF to WOFF using nanoemoji output
+        # 5. Convert TTF to WOFF using nanoemoji output
+        write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF")
         font_ttf_input = os.path.join(temp_dir, "font.ttf")
         shutil.copy(output_ttf_color_path, font_ttf_input)
 
@@ -243,7 +335,8 @@ def generate_font(
                 f"ttf2woff failed with error: {ttf2woff_res.stderr}"
             )
 
-        # 8. Create ZIP file with color-optimized TTF and WOFF
+        # 6. Create ZIP file with color-optimized TTF and WOFF
+        write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF")
         output_zip_filename = f"{fontname}_fonts.zip"
         output_zip_path = os.path.join(temp_dir, output_zip_filename)
 
@@ -260,20 +353,150 @@ def generate_font(
 
         logger.info(f"Created ZIP archive: {output_zip_filename}")
 
-        # 9. Return the ZIP file as response, clean up when completed
-        background_tasks.add_task(cleanup_temp_dir, temp_dir)
-        return FileResponse(
-            path=output_zip_path, filename=output_zip_filename, media_type="application/zip"
+        # 7. Mark completed — the result stays on disk until the TTL sweep.
+        write_job_status(
+            job_id, status="completed", phase="done", detail="", zip_filename=output_zip_filename
         )
 
-    except HTTPException:
-        # Re-raise known HTTP exceptions
-        cleanup_temp_dir(temp_dir)
-        raise
     except Exception as e:
-        cleanup_temp_dir(temp_dir)
-        logger.exception("Unexpected error during font generation:")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.exception(f"Font generation job {job_id} failed:")
+        # Keep the job dir (status.json included) so pollers see the failure;
+        # the TTL sweep removes it later.
+        write_job_status(job_id, status="failed", phase="error", detail=str(e))
+    finally:
+        stop_heartbeat.set()
+
+
+@app.post(
+    "/api/generate-font",
+    status_code=202,
+    summary="Submit a font generation job (PNG glyphs → TTF + WOFF)",
+    description=(
+        "Saves the uploaded PNG glyphs, starts generation in the background, and "
+        "returns a job_id immediately. Generation can take ~10 minutes: poll "
+        "GET /api/job/{job_id}, then download the ZIP (color TTF + WOFF) from "
+        "GET /api/job/{job_id}/result."
+    ),
+    responses={
+        202: {
+            "description": "Job accepted",
+            "content": {"application/json": {"example": {"job_id": "0f3a...", "status": "queued"}}},
+        },
+        400: {"description": "Invalid input (non-PNG files or missing required fields)"},
+    },
+)
+def generate_font(
+    files: list[UploadFile] = File(
+        ...,
+        description="List of PNG glyph files. File names must reflect their characters (e.g. 'A.png' or hex codepoints 'u0041.png')",
+    ),
+    fontname: str = Form("MyCustomFont", description="URL-safe font identifier (used in filenames)"),
+    fullname: str = Form("My Custom Font", description="Full display name visible in font menus"),
+    familyname: str = Form("My Family", description="Font family name for grouping"),
+    upm: int = Form(1000, description="Units per EM - canvas grid size (500-2048)"),
+    advance_width: int = Form(
+        600, description="Character advance width for monospace fonts (500-2048)"
+    ),
+    vertical_raise: int = Form(
+        120, description="Baseline vertical offset in units (-500 to 500)"
+    ),
+    monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
+):
+    # Validate uploaded files are PNGs
+    for file in files:
+        filename = os.path.basename(file.filename)
+        if not filename.lower().endswith(".png"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file format: {file.filename}. Only PNG files are supported.",
+            )
+
+    sweep_stale_jobs()
+
+    # Persist the uploads into the job workspace before returning — the
+    # UploadFile streams are only readable while the request is alive.
+    job_id = uuid.uuid4().hex
+    png_folder = job_dir(job_id) / "png_glyphs"
+    png_folder.mkdir(parents=True, exist_ok=True)
+    for file in files:
+        filename = os.path.basename(file.filename)
+        if not filename or filename == ".png":
+            filename = "glyph.png"
+        with (png_folder / filename).open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    logger.info(f"Job {job_id}: saved {len(files)} PNGs, starting worker thread.")
+
+    write_job_status(job_id, status="queued", phase="queued", detail="Waiting to start")
+    threading.Thread(
+        target=run_generation_job,
+        args=(job_id, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace),
+        daemon=True,
+    ).start()
+
+    return JSONResponse(status_code=202, content={"job_id": job_id, "status": "queued"})
+
+
+@app.get(
+    "/api/job/{job_id}",
+    summary="Poll a font generation job",
+    responses={
+        200: {
+            "description": "Job state",
+            "content": {"application/json": {"example": {"status": "processing", "phase": "fontforge", "detail": "Compiling TTF with FontForge"}}},
+        },
+        404: {"description": "Unknown or expired job"},
+    },
+)
+def get_job_status(job_id: str):
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    status = read_job_status(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job")
+    # A non-terminal job with no recent heartbeat has a dead worker thread —
+    # report it as failed instead of letting the client poll forever.
+    if (
+        status.get("status") in ("queued", "processing")
+        and status.get("updated_at", 0) < time.time() - ORPHAN_STALE_SECONDS
+    ):
+        write_job_status(
+            job_id,
+            status="failed",
+            phase="error",
+            detail="The font server restarted during generation — please export again.",
+        )
+        return read_job_status(job_id)
+    return status
+
+
+@app.get(
+    "/api/job/{job_id}/result",
+    summary="Download the finished TTF + WOFF ZIP for a completed job",
+    responses={
+        200: {
+            "description": "ZIP archive containing TTF and WOFF font files",
+            "content": {"application/zip": {"example": "fontname_fonts.zip"}},
+        },
+        404: {"description": "Unknown or expired job"},
+        409: {"description": "Job is not completed yet (or failed)"},
+    },
+)
+def get_job_result(job_id: str):
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    status = read_job_status(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job")
+    if status.get("status") != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {status.get('status', 'unknown')} ({status.get('detail', '')})",
+        )
+    zip_filename = status.get("zip_filename", "")
+    zip_path = job_dir(job_id) / zip_filename
+    if not zip_filename or not zip_path.exists():
+        raise HTTPException(status_code=404, detail="Result file no longer available")
+    return FileResponse(path=str(zip_path), filename=zip_filename, media_type="application/zip")
 
 
 # Fallback UI serve (GET /)
