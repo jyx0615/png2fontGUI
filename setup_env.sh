@@ -30,6 +30,11 @@ fi
 echo "Installing ttf2woff..."
 npm install -g ttf2woff
 
+
+# Install ttf2woff2 in the conda environment
+echo "Installing ttf2woff2..."
+npm install -g ttf2woff2
+
 # Install Python dependencies
 echo "Installing Python dependencies..."
 pip install -r requirements.txt

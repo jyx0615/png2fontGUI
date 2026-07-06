@@ -334,9 +334,36 @@ def run_generation_job(
             logger.warning(
                 f"ttf2woff failed with error: {ttf2woff_res.stderr}"
             )
+            
+        # 6. Convert TTF to WOFF2 (ttf2woff2 reads the TTF from stdin and
+        # writes the WOFF2 to stdout)
+        write_job_status(job_id, phase="woff2", detail="Converting TTF to WOFF2")
+        output_woff2_filename = f"{fontname}.woff2"
+        output_woff2_path = os.path.join(temp_dir, output_woff2_filename)
 
-        # 6. Create ZIP file with color-optimized TTF and WOFF
-        write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF")
+        ttf2woff2_bin = shutil.which("ttf2woff2") or os.path.expanduser(
+            "~/.nvm/versions/node/v24.15.0/bin/ttf2woff2"
+        )
+        logger.info(f"Executing ttf2woff2: {font_ttf_input} -> {output_woff2_path}")
+        with open(font_ttf_input, "rb") as ttf_in, open(output_woff2_path, "wb") as woff2_out:
+            ttf2woff2_res = subprocess.run(
+                [ttf2woff2_bin],
+                stdin=ttf_in,
+                stdout=woff2_out,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        if ttf2woff2_res.returncode != 0:
+            logger.warning(
+                f"ttf2woff2 failed with error: {ttf2woff2_res.stderr.decode(errors='replace')}"
+            )
+            # Remove the empty/partial output so it doesn't end up in the ZIP
+            if os.path.exists(output_woff2_path):
+                os.remove(output_woff2_path)
+
+        # 7. Create ZIP file with color-optimized TTF, WOFF and WOFF2
+        write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF + WOFF2")
         output_zip_filename = f"{fontname}_fonts.zip"
         output_zip_path = os.path.join(temp_dir, output_zip_filename)
 
@@ -351,9 +378,14 @@ def run_generation_job(
                 zf.write(output_woff_path, arcname=output_woff_filename)
                 logger.info(f"Added {output_woff_filename} to zip")
 
+            # Add WOFF2 if conversion succeeded
+            if os.path.exists(output_woff2_path):
+                zf.write(output_woff2_path, arcname=output_woff2_filename)
+                logger.info(f"Added {output_woff2_filename} to zip")
+
         logger.info(f"Created ZIP archive: {output_zip_filename}")
 
-        # 7. Mark completed — the result stays on disk until the TTL sweep.
+        # 8. Mark completed — the result stays on disk until the TTL sweep.
         write_job_status(
             job_id, status="completed", phase="done", detail="", zip_filename=output_zip_filename
         )
@@ -370,11 +402,11 @@ def run_generation_job(
 @app.post(
     "/api/generate-font",
     status_code=202,
-    summary="Submit a font generation job (PNG glyphs → TTF + WOFF)",
+    summary="Submit a font generation job (PNG glyphs → TTF + WOFF + WOFF2)",
     description=(
         "Saves the uploaded PNG glyphs, starts generation in the background, and "
         "returns a job_id immediately. Generation can take ~10 minutes: poll "
-        "GET /api/job/{job_id}, then download the ZIP (color TTF + WOFF) from "
+        "GET /api/job/{job_id}, then download the ZIP (color TTF + WOFF + WOFF2) from "
         "GET /api/job/{job_id}/result."
     ),
     responses={
@@ -471,10 +503,10 @@ def get_job_status(job_id: str):
 
 @app.get(
     "/api/job/{job_id}/result",
-    summary="Download the finished TTF + WOFF ZIP for a completed job",
+    summary="Download the finished TTF + WOFF + WOFF2 ZIP for a completed job",
     responses={
         200: {
-            "description": "ZIP archive containing TTF and WOFF font files",
+            "description": "ZIP archive containing TTF, WOFF and WOFF2 font files",
             "content": {"application/zip": {"example": "fontname_fonts.zip"}},
         },
         404: {"description": "Unknown or expired job"},

@@ -41,8 +41,7 @@ def create_empty_svg(
     tree.write(svg_output_path, encoding="utf-8", xml_declaration=False)
 
 
-UPSCALE_FACTOR = 4  # Lanczos upscale multiplier before tracing
-
+UPSCALE_FACTOR = 2  # Lanczos upscale multiplier before tracing
 
 def _is_near_white(color: str, threshold: int = 256) -> bool:
     """Return True if `color` (CSS hex) is near-white."""
