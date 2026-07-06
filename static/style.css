@@ -831,6 +831,18 @@ details[open] .chevron-icon {
     padding: 10px 16px;
 }
 
+.file-size {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-soft);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
 .hidden {
     display: none !important;
 }

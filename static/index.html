@@ -201,8 +201,9 @@
             <div class="download-section">
                 <h3>Download Font Files</h3>
                 <div class="download-buttons">
-                    <a href="#" id="download-ttf" class="btn btn-secondary" download><i data-lucide="download"></i> Color-Optimized TTF</a>
-                    <a href="#" id="download-woff" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF Font</a>
+                    <a href="#" id="download-ttf" class="btn btn-secondary" download><i data-lucide="download"></i> Color-Optimized TTF <span class="file-size" id="size-ttf"></span></a>
+                    <a href="#" id="download-woff" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF Font <span class="file-size" id="size-woff"></span></a>
+                    <a href="#" id="download-woff2" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF2 Font <span class="file-size" id="size-woff2"></span></a>
                 </div>
             </div>
 
@@ -412,6 +413,56 @@
             }
         }
 
+        // Map backend job phases to the visual pipeline steps
+        const PHASE_TO_STEP = {
+            'queued': 'step-upload',
+            'tracing': 'step-trace',
+            'fontforge': 'step-compile',
+            'color-optimize': 'step-embed',
+            'woff': 'step-optimize',
+            'woff2': 'step-optimize',
+            'zipping': 'step-optimize'
+        };
+
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // Human-readable file size (e.g. 245.3 KB)
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        // Poll GET /api/job/{id} until the job completes or fails
+        async function pollJobUntilDone(apiBase, jobId) {
+            while (true) {
+                await sleep(2000);
+
+                let status;
+                try {
+                    const res = await fetch(`${apiBase}/api/job/${jobId}`);
+                    if (res.status === 404) {
+                        throw new Error('Job expired or was not found on the server.');
+                    }
+                    if (!res.ok) continue; // transient server error — keep polling
+                    status = await res.json();
+                } catch (err) {
+                    if (err instanceof TypeError) continue; // network hiccup — keep polling
+                    throw err;
+                }
+
+                if (status.status === 'completed') return;
+                if (status.status === 'failed') {
+                    throw new Error(status.detail || 'Font generation failed on the server.');
+                }
+
+                // Reflect real backend progress in the modal
+                const stepId = PHASE_TO_STEP[status.phase];
+                if (stepId) setStepActive(stepId);
+                if (status.detail) modalStatus.textContent = status.detail;
+            }
+        }
+
         // Dynamic API trigger
         generateBtn.addEventListener('click', async () => {
             if (uploadedFiles.length === 0) return;
@@ -437,54 +488,40 @@
             modalStatus.textContent = 'Uploading files...';
 
             try {
-                // Simulate processing updates based on timeouts
-                const stepTimer1 = setTimeout(() => {
-                    setStepActive('step-trace');
-                    modalStatus.textContent = 'Tracing PNGs to clean SVG outlines...';
-                }, 1000);
-
-                const stepTimer2 = setTimeout(() => {
-                    setStepActive('step-compile');
-                    modalStatus.textContent = monospaceToggle.checked
-                        ? 'Building monospace glyphs in FontForge...'
-                        : 'Building proportional glyphs in FontForge...';
-                }, 3000);
-
-                const stepTimer3 = setTimeout(() => {
-                    setStepActive('step-embed');
-                    modalStatus.textContent = 'Embedding color vector outlines...';
-                }, 6000);
-
-                const stepTimer4 = setTimeout(() => {
-                    setStepActive('step-optimize');
-                    modalStatus.textContent = 'Optimizing with nanoemoji and converting to WOFF...';
-                }, 9000);
-
                 const apiBase = document.getElementById('api-base-url').value.trim().replace(/\/$/, '') || '';
                 const response = await fetch(`${apiBase}/api/generate-font`, {
                     method: 'POST',
                     body: formData
                 });
 
-                // Clear fast timers
-                clearTimeout(stepTimer1);
-                clearTimeout(stepTimer2);
-                clearTimeout(stepTimer3);
-                clearTimeout(stepTimer4);
-
                 if (!response.ok) {
                     const err = await response.json();
                     throw new Error(err.detail || 'Font generation failed on the server.');
                 }
 
-                // Retrieve ZIP Blob
-                const zipBlob = await response.blob();
+                // 202 Accepted: the server queued a background job — poll it until done
+                const { job_id } = await response.json();
+                if (!job_id) {
+                    throw new Error('Server did not return a job id.');
+                }
+
+                await pollJobUntilDone(apiBase, job_id);
+
+                // Job completed: download the ZIP result
+                modalStatus.textContent = 'Downloading font package...';
+                const resultResponse = await fetch(`${apiBase}/api/job/${job_id}/result`);
+                if (!resultResponse.ok) {
+                    const err = await resultResponse.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Failed to download the generated font.');
+                }
+                const zipBlob = await resultResponse.blob();
 
                 // Extract ZIP file
                 const zip = await JSZip.loadAsync(zipBlob);
                 let fontFiles = {
                     ttf: null,
-                    woff: null
+                    woff: null,
+                    woff2: null
                 };
 
                 // Extract files from ZIP
@@ -494,6 +531,8 @@
 
                     if (filename.endsWith('.ttf')) {
                         fontFiles.ttf = { blob: fileData, url: fileUrl, name: filename };
+                    } else if (filename.endsWith('.woff2')) {
+                        fontFiles.woff2 = { blob: fileData, url: fileUrl, name: filename };
                     } else if (filename.endsWith('.woff')) {
                         fontFiles.woff = { blob: fileData, url: fileUrl, name: filename };
                     }
@@ -523,24 +562,20 @@
                     console.warn('WOFF font file not available for preview');
                 }
 
-                // Update download links
-                const downloadTtf = document.getElementById('download-ttf');
-                const downloadWoff = document.getElementById('download-woff');
+                // Update download links with file sizes
+                for (const format of ['ttf', 'woff', 'woff2']) {
+                    const link = document.getElementById(`download-${format}`);
+                    const sizeLabel = document.getElementById(`size-${format}`);
+                    const font = fontFiles[format];
 
-                if (fontFiles.ttf) {
-                    downloadTtf.href = fontFiles.ttf.url;
-                    downloadTtf.download = fontFiles.ttf.name;
-                    downloadTtf.style.display = 'inline-block';
-                } else {
-                    downloadTtf.style.display = 'none';
-                }
-
-                if (fontFiles.woff) {
-                    downloadWoff.href = fontFiles.woff.url;
-                    downloadWoff.download = fontFiles.woff.name;
-                    downloadWoff.style.display = 'inline-block';
-                } else {
-                    downloadWoff.style.display = 'none';
+                    if (font) {
+                        link.href = font.url;
+                        link.download = font.name;
+                        link.style.display = 'inline-flex';
+                        sizeLabel.textContent = formatFileSize(font.blob.size);
+                    } else {
+                        link.style.display = 'none';
+                    }
                 }
 
                 // Transpose to success modal
