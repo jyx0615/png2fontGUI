@@ -159,6 +159,10 @@ def run_generation_job(
     advance_width: int,
     vertical_raise: int,
     monospace: bool,
+    ascent: int,
+    descent: int,
+    line_height: int,
+    letter_spacing: int,
 ):
     """Worker-thread body: runs the full pipeline, updating status.json as it goes."""
     temp_dir = str(job_dir(job_id))
@@ -209,6 +213,14 @@ def run_generation_job(
             str(advance_width),
             "--vertical-raise",
             str(vertical_raise),
+            "--ascent",
+            str(ascent),
+            "--descent",
+            str(descent),
+            "--line-height",
+            str(line_height),
+            "--letter-spacing",
+            str(letter_spacing),
         ]
         if monospace:
             fontforge_cmd.append("--monospace")
@@ -433,6 +445,14 @@ def generate_font(
         120, description="Baseline vertical offset in units (-500 to 500)"
     ),
     monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
+    ascent: int = Form(800, description="Font-wide ascent in units (distance above baseline)"),
+    descent: int = Form(200, description="Font-wide descent in units (distance below baseline)"),
+    line_height: int = Form(
+        1200, description="Target default line height in units (ascent + descent + line gap)"
+    ),
+    letter_spacing: int = Form(
+        0, description="Extra advance width added after each non-space glyph, in units"
+    ),
 ):
     # Validate uploaded files are PNGs
     for file in files:
@@ -461,7 +481,10 @@ def generate_font(
     write_job_status(job_id, status="queued", phase="queued", detail="Waiting to start")
     threading.Thread(
         target=run_generation_job,
-        args=(job_id, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace),
+        args=(
+            job_id, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace,
+            ascent, descent, line_height, letter_spacing,
+        ),
         daemon=True,
     ).start()
 

@@ -21,13 +21,28 @@ def svg_filename_to_codepoint(filename: str) -> int:
     raise ValueError(f"Cannot infer a Unicode code point from {filename!r}.")
 
 
-def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace=False):
+def import_glyphs_from_svg(
+    folder, output_path, fontname, fullname, familyname, upm, advance_width, vertical_raise,
+    monospace=False, ascent=None, descent=None, line_height=None, letter_spacing=0,
+):
     font = fontforge.font()
     font.fontname = fontname
     font.fullname = fullname
     font.familyname = familyname
     font.em = upm
     font.encoding = "UnicodeFull"
+
+    # Ascent/descent define the glyphs' natural vertical placement; any
+    # extra room the caller wants for line spacing (e.g. a tuned line-height
+    # multiplier) goes into the line gap instead, so apps that respect it
+    # get the padded spacing while single-glyph metrics stay accurate.
+    if ascent is not None and descent is not None:
+        font.ascent = ascent
+        font.descent = descent
+        if line_height is not None:
+            line_gap = max(0, line_height - (ascent + descent))
+            font.hhea_linegap = line_gap
+            font.os2_typolinegap = line_gap
 
     for filename in os.listdir(folder):
         if filename.endswith(".svg"):
@@ -52,13 +67,17 @@ def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, 
                 # height maps to UPM — all glyphs share the same vertical
                 # reference.  Do NOT re-scale here; that would blow up short
                 # glyphs (=, –, …) to enormous widths.
+                # png2svg treats the bottom of the source PNG as the glyph
+                # baseline, but the PNG canvas includes descender room below
+                # the real baseline — vertical_raise shifts every glyph up
+                # by that much so it lands on the font's actual baseline.
                 if monospace:
                     # Center the glyph within the monospace advance_width
                     dx = -xmin + round((advance_width - width) / 2)
-                    glyph.transform((1, 0, 0, 1, dx, 0))
+                    glyph.transform((1, 0, 0, 1, dx, vertical_raise))
                 else:
                     # Just shift the glyph so its left ink edge starts at x = 0.
-                    glyph.transform((1, 0, 0, 1, -xmin, 0))
+                    glyph.transform((1, 0, 0, 1, -xmin, vertical_raise))
 
             if char_code == 32:
                 glyph.width = advance_width if monospace else CONFIG.space_width
@@ -66,9 +85,13 @@ def import_glyphs_from_svg(folder, output_path, fontname, fullname, familyname, 
                 if monospace:
                     glyph.width = advance_width
                 else:
-                    # Advance width = actual ink width (no sidebearing).
+                    # Advance width = actual ink width (no sidebearing) plus
+                    # the tuned letter-spacing, so the default (untracked)
+                    # rendering already carries the Studio's Spacing slider
+                    # value baked in as real advance width.
                     xmin2, _, xmax2, _ = glyph.boundingBox()
-                    glyph.width = max(1, round(xmax2 - xmin2))
+                    ink_width = xmax2 - xmin2
+                    glyph.width = max(1, round(ink_width + letter_spacing))
             print(
                 f"Successfully imported {filename} to Unicode {char_code} {chr(char_code)}"
             )
@@ -88,6 +111,10 @@ def main() -> None:
     parser.add_argument("--advance-width", type=int, default=CONFIG.advance_width, help="Monospace advance width")
     parser.add_argument("--vertical-raise", type=int, default=120, help="Vertical raise offset")
     parser.add_argument("--monospace", action="store_true", default=False, help="Generate monospace font")
+    parser.add_argument("--ascent", type=int, default=None, help="Font-wide ascent in units")
+    parser.add_argument("--descent", type=int, default=None, help="Font-wide descent in units")
+    parser.add_argument("--line-height", type=int, default=None, help="Target default line height in units")
+    parser.add_argument("--letter-spacing", type=int, default=0, help="Extra advance added after each glyph, in units")
 
     args, unknown = parser.parse_known_args()
 
@@ -104,7 +131,11 @@ def main() -> None:
         upm=args.upm,
         advance_width=args.advance_width,
         vertical_raise=args.vertical_raise,
-        monospace=args.monospace
+        monospace=args.monospace,
+        ascent=args.ascent,
+        descent=args.descent,
+        line_height=args.line_height,
+        letter_spacing=args.letter_spacing,
     )
 
 
