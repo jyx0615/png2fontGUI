@@ -45,7 +45,34 @@ app.add_middleware(
 )
 
 # Import png2svg conversion function
+from fontTools.ttLib import TTFont
+
 from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
+
+
+def fix_bitmap_advances(font_path: str) -> None:
+    """Copy hmtx advances into the CBDT bitmap glyph metrics.
+
+    nanoemoji assumes emoji-style square glyphs and sets each bitmap's
+    advance to its rendered image width — a full em for the blank space
+    glyph. Chrome lays out CBDT color glyphs with those bitmap advances,
+    not hmtx, so word spacing and letter spacing were silently ignored.
+    """
+    font = TTFont(font_path)
+    if "CBDT" not in font or "CBLC" not in font:
+        return
+    upm = font["head"].unitsPerEm
+    hmtx = font["hmtx"]
+    cblc = font["CBLC"]
+    for strike_index, strike in enumerate(font["CBDT"].strikeData):
+        ppem = cblc.strikes[strike_index].bitmapSizeTable.ppemX
+        for glyph_name, rec in strike.items():
+            advance, lsb = hmtx[glyph_name]
+            rec.decompile()
+            # SmallGlyphMetrics fields are uint8/int8 — clamp to be safe.
+            rec.metrics.Advance = min(255, max(0, round(advance * ppem / upm)))
+            rec.metrics.BearingX = min(127, max(-128, round(lsb * ppem / upm)))
+    font.save(font_path)
 
 
 # Helper to remove a directory tree
@@ -332,6 +359,11 @@ def run_generation_job(
         else:
             logger.warning("nanoemoji directory not found, using original TTF")
             shutil.copy(output_ttf_path, output_ttf_color_path)
+
+        # nanoemoji writes emoji-style bitmap advances (image width, 1 em for
+        # the space) — rewrite them from hmtx so Chrome's CBDT layout honors
+        # the font's real spacing. No-op if the font has no bitmap tables.
+        fix_bitmap_advances(output_ttf_color_path)
 
         # 5. Convert TTF to WOFF using nanoemoji output
         write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF")
