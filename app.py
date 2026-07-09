@@ -45,7 +45,7 @@ app.add_middleware(
 )
 
 # Import png2svg conversion function
-from png2svg import convert_pngs_to_svgs
+from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
 
 
 # Helper to remove a directory tree
@@ -189,6 +189,14 @@ def run_generation_job(
         convert_pngs_to_svgs(png_folder, svg_folder, target_upm=upm)
         logger.info("PNG to SVG conversion completed.")
 
+        # 1b. Apply vertical metrics (descent/baseline placement) to the
+        # traced SVGs.  Kept separate from tracing so metric changes
+        # (ascent/descent/line-height) never require a re-trace — both
+        # FontForge and addsvg consume this shifted folder.
+        svg_shifted_folder = Path(temp_dir) / "svg_glyphs_shifted"
+        shift_svgs_for_descent(svg_folder, svg_shifted_folder, target_upm=upm, descent=descent)
+        logger.info("Applied vertical metrics to traced SVGs.")
+
         # 2. Generate TTF using FontForge
         write_job_status(job_id, phase="fontforge", detail="Compiling TTF with FontForge")
         output_ttf_filename = f"{fontname}.ttf"
@@ -198,7 +206,7 @@ def run_generation_job(
             "fontforge",
             "-script",
             "font.py",
-            str(svg_folder),
+            str(svg_shifted_folder),
             "--output",
             output_ttf_path,
             "--fontname",
@@ -241,7 +249,7 @@ def run_generation_job(
         # 5. Embed SVG outlines back into the TTF using addsvg
         # Discover addsvg bin or fallback
         addsvg_bin = shutil.which("addsvg") or "/opt/miniconda3/envs/genFont/bin/addsvg"
-        addsvg_cmd = [addsvg_bin, str(svg_folder), output_ttf_path]
+        addsvg_cmd = [addsvg_bin, str(svg_shifted_folder), output_ttf_path]
 
         logger.info(f"Executing addsvg: {' '.join(addsvg_cmd)}")
         addsvg_res = subprocess.run(
@@ -442,7 +450,7 @@ def generate_font(
         600, description="Character advance width for monospace fonts (500-2048)"
     ),
     vertical_raise: int = Form(
-        120, description="Baseline vertical offset in units (-500 to 500)"
+        0, description="Baseline vertical offset in units (-500 to 500)"
     ),
     monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
     ascent: int = Form(800, description="Font-wide ascent in units (distance above baseline)"),

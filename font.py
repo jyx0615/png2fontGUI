@@ -39,6 +39,14 @@ def import_glyphs_from_svg(
     if ascent is not None and descent is not None:
         font.ascent = ascent
         font.descent = descent
+        # Pin hhea to the requested metrics; otherwise FontForge derives them
+        # from ink extents, and browsers that size line boxes from hhea
+        # (e.g. Chrome on macOS) get a wildly different line height than the
+        # one the caller asked for.
+        font.hhea_ascent_add = False
+        font.hhea_descent_add = False
+        font.hhea_ascent = ascent
+        font.hhea_descent = -descent
         if line_height is not None:
             line_gap = max(0, line_height - (ascent + descent))
             font.hhea_linegap = line_gap
@@ -67,17 +75,21 @@ def import_glyphs_from_svg(
                 # height maps to UPM — all glyphs share the same vertical
                 # reference.  Do NOT re-scale here; that would blow up short
                 # glyphs (=, –, …) to enormous widths.
-                # png2svg treats the bottom of the source PNG as the glyph
-                # baseline, but the PNG canvas includes descender room below
-                # the real baseline — vertical_raise shifts every glyph up
-                # by that much so it lands on the font's actual baseline.
+                # png2svg authors SVGs in the OT-SVG convention (y=0 is the
+                # baseline, ink above it at negative y), but FontForge's SVG
+                # import maps SVG y=0 to the ASCENT line, landing every glyph
+                # a full ascent too high — shift down by font.ascent to put
+                # the outlines back where the SVG (and the color tables built
+                # from it) say they belong.  vertical_raise stays a caller
+                # tunable on top of that.
+                dy = vertical_raise - font.ascent
                 if monospace:
                     # Center the glyph within the monospace advance_width
                     dx = -xmin + round((advance_width - width) / 2)
-                    glyph.transform((1, 0, 0, 1, dx, vertical_raise))
+                    glyph.transform((1, 0, 0, 1, dx, dy))
                 else:
                     # Just shift the glyph so its left ink edge starts at x = 0.
-                    glyph.transform((1, 0, 0, 1, -xmin, vertical_raise))
+                    glyph.transform((1, 0, 0, 1, -xmin, dy))
 
             if char_code == 32:
                 glyph.width = advance_width if monospace else CONFIG.space_width
@@ -109,7 +121,7 @@ def main() -> None:
     parser.add_argument("--familyname", default=CONFIG.familyname, help="Font family name")
     parser.add_argument("--upm", type=int, default=CONFIG.upm, help="Units per em")
     parser.add_argument("--advance-width", type=int, default=CONFIG.advance_width, help="Monospace advance width")
-    parser.add_argument("--vertical-raise", type=int, default=120, help="Vertical raise offset")
+    parser.add_argument("--vertical-raise", type=int, default=0, help="Vertical raise offset")
     parser.add_argument("--monospace", action="store_true", default=False, help="Generate monospace font")
     parser.add_argument("--ascent", type=int, default=None, help="Font-wide ascent in units")
     parser.add_argument("--descent", type=int, default=None, help="Font-wide descent in units")

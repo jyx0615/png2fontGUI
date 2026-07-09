@@ -161,6 +161,11 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
 
         children = list(root)
 
+        # Traced SVGs are metric-independent: the PNG canvas bottom sits on
+        # y=0 with all ink above it at negative y.  Vertical font metrics
+        # (descent/baseline placement) are applied later at font-build time
+        # by shift_svgs_for_descent(), so changing metrics never requires
+        # re-tracing.
         wrapper_tag = f"{{{namespace}}}g" if namespace else "g"
         wrapper = ET.Element(
             wrapper_tag,
@@ -215,6 +220,41 @@ def convert_pngs_to_svgs(png_folder: Path | str, svg_output: Path | str, target_
     space_svg_output_path = svg_output_directory / "u0020.svg"
     create_empty_svg(space_svg_output_path, width=target_upm, height=target_upm)
     print("Created empty space SVG to preserve monospace width.")
+
+
+def shift_svgs_for_descent(
+    svg_folder: Path | str, out_folder: Path | str, target_upm: int, descent: int
+) -> None:
+    """Apply vertical font metrics to traced SVGs at font-build time.
+
+    Traced SVGs put the PNG canvas bottom on y=0 (baseline).  The font treats
+    the canvas as the full em box (top = ascent line, bottom = -descent), so
+    shift the content down by `descent` units: canvas top lands at
+    -(upm - descent) and canvas bottom at +descent, leaving descender room
+    below the baseline for g/j/p/q/y.  This is a cheap XML rewrite — changing
+    ascent/descent/line-height only re-runs this and FontForge, not the trace.
+    """
+    src_directory = Path(svg_folder)
+    out_directory = Path(out_folder)
+    out_directory.mkdir(parents=True, exist_ok=True)
+
+    for svg_path in sorted(src_directory.glob("*.svg")):
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+
+        view_box = root.attrib.get("viewBox", f"0 -{target_upm} {target_upm} {target_upm}")
+        _, _, vb_width, _ = view_box.split()
+
+        wrapper = ET.Element(
+            f"{{{SVG_NS}}}g", {"transform": f"translate(0,{descent})"}
+        )
+        for child in list(root):
+            root.remove(child)
+            wrapper.append(child)
+        root.append(wrapper)
+
+        root.set("viewBox", f"0 -{target_upm - descent} {vb_width} {target_upm}")
+        tree.write(out_directory / svg_path.name, encoding="utf-8", xml_declaration=False)
 
 
 def main() -> None:
