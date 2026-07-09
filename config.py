@@ -37,3 +37,18 @@ def load_config(config_path: str | Path = "config.toml") -> FontConfig:
 
 
 CONFIG = load_config()
+
+
+def vertical_metrics(upm: int) -> tuple[int, int, int]:
+    """Return (ascent, descent, line_height) for a given UPM.
+
+    Fixed internal constants, not user knobs: the classic 80/20 em split with
+    a 1.2 em default line height — the same proportions as Times/Arial-class
+    fonts — so generated fonts drop in next to system fonts without changing
+    line spacing.  Apps control actual line spacing at layout time
+    (CSS line-height etc.); the font only ships a sane default.
+    """
+    ascent = round(upm * 0.8)
+    descent = upm - ascent
+    line_height = round(upm * 1.2)
+    return ascent, descent, line_height

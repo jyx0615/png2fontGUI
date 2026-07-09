@@ -3,7 +3,7 @@ import os
 import re
 import argparse
 
-from config import CONFIG
+from config import CONFIG, vertical_metrics
 
 def svg_filename_to_codepoint(filename: str) -> int:
     stem = filename.rsplit(".", 1)[0]
@@ -123,9 +123,9 @@ def main() -> None:
     parser.add_argument("--advance-width", type=int, default=CONFIG.advance_width, help="Monospace advance width")
     parser.add_argument("--vertical-raise", type=int, default=0, help="Vertical raise offset")
     parser.add_argument("--monospace", action="store_true", default=False, help="Generate monospace font")
-    parser.add_argument("--ascent", type=int, default=None, help="Font-wide ascent in units")
-    parser.add_argument("--descent", type=int, default=None, help="Font-wide descent in units")
-    parser.add_argument("--line-height", type=int, default=None, help="Target default line height in units")
+    parser.add_argument("--ascent", type=int, default=None, help="Font-wide ascent in units (default: standard proportions from UPM)")
+    parser.add_argument("--descent", type=int, default=None, help="Font-wide descent in units (default: standard proportions from UPM)")
+    parser.add_argument("--line-height", type=int, default=None, help="Target default line height in units (default: standard proportions from UPM)")
     parser.add_argument("--letter-spacing", type=int, default=0, help="Extra advance added after each glyph, in units")
 
     args, unknown = parser.parse_known_args()
@@ -133,6 +133,14 @@ def main() -> None:
     # If FontForge script runner adds extra args or if there are unexpected positional args
     # we filter and handle them safely
     output_ttf = args.output if args.output else f"{args.fontname}.ttf"
+
+    # Vertical metrics default to fixed standard proportions so generated
+    # fonts mix with system fonts without changing line spacing; the CLI
+    # flags remain as expert overrides.
+    default_ascent, default_descent, default_line_height = vertical_metrics(args.upm)
+    ascent = args.ascent if args.ascent is not None else default_ascent
+    descent = args.descent if args.descent is not None else default_descent
+    line_height = args.line_height if args.line_height is not None else default_line_height
 
     import_glyphs_from_svg(
         folder=args.svg_folder,
@@ -144,9 +152,9 @@ def main() -> None:
         advance_width=args.advance_width,
         vertical_raise=args.vertical_raise,
         monospace=args.monospace,
-        ascent=args.ascent,
-        descent=args.descent,
-        line_height=args.line_height,
+        ascent=ascent,
+        descent=descent,
+        line_height=line_height,
         letter_spacing=args.letter_spacing,
     )
 

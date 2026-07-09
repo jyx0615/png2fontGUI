@@ -47,6 +47,7 @@ app.add_middleware(
 # Import png2svg conversion function
 from fontTools.ttLib import TTFont
 
+from config import vertical_metrics
 from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
 
 
@@ -186,12 +187,17 @@ def run_generation_job(
     advance_width: int,
     vertical_raise: int,
     monospace: bool,
-    ascent: int,
-    descent: int,
-    line_height: int,
+    line_height: int | None,
     letter_spacing: int,
 ):
     """Worker-thread body: runs the full pipeline, updating status.json as it goes."""
+    # Ascent/descent are internal constants (standard proportions) — see
+    # config.vertical_metrics.  line_height is an optional API override for
+    # the font's default line spacing; anything beyond ascent + descent
+    # becomes line gap.
+    ascent, descent, default_line_height = vertical_metrics(upm)
+    if line_height is None:
+        line_height = default_line_height
     temp_dir = str(job_dir(job_id))
     png_folder = Path(temp_dir) / "png_glyphs"
     svg_folder = Path(temp_dir) / "svg_glyphs"
@@ -485,10 +491,14 @@ def generate_font(
         0, description="Baseline vertical offset in units (-500 to 500)"
     ),
     monospace: bool = Form(False, description="Enable monospace layout with fixed character widths"),
-    ascent: int = Form(800, description="Font-wide ascent in units (distance above baseline)"),
-    descent: int = Form(200, description="Font-wide descent in units (distance below baseline)"),
-    line_height: int = Form(
-        1200, description="Target default line height in units (ascent + descent + line gap)"
+    line_height: int | None = Form(
+        None,
+        description=(
+            "Default line height in units (ascent + descent + line gap). "
+            "Omit for the standard 1.2 em (1.2 x upm) that matches system fonts. "
+            "Note: only affects text rendered at line-height:normal; apps that "
+            "set an explicit line height override this."
+        ),
     ),
     letter_spacing: int = Form(
         0, description="Extra advance width added after each non-space glyph, in units"
@@ -523,7 +533,7 @@ def generate_font(
         target=run_generation_job,
         args=(
             job_id, fontname, fullname, familyname, upm, advance_width, vertical_raise, monospace,
-            ascent, descent, line_height, letter_spacing,
+            line_height, letter_spacing,
         ),
         daemon=True,
     ).start()
