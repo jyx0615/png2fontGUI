@@ -5,6 +5,7 @@ from pathlib import Path
 import vtracer
 import subprocess
 import argparse
+import numpy as np
 from PIL import Image
 import shutil
 
@@ -41,55 +42,74 @@ def create_empty_svg(
     tree.write(svg_output_path, encoding="utf-8", xml_declaration=False)
 
 
-UPSCALE_FACTOR = 2  # Lanczos upscale multiplier before tracing
+UPSCALE_FACTOR = 2  # Nearest-neighbor upscale multiplier before tracing
+ALPHA_THRESHOLD = 30   # Low threshold preserves soft/feathered glyph edges
 
-def _is_near_white(color: str, threshold: int = 256) -> bool:
-    """Return True if `color` (CSS hex) is near-white."""
-    c = color.strip().lstrip("#").lower()
-    if c in ("fff", "ffffff", "white"):
-        return True
-    if len(c) == 6:
-        try:
-            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-            return r >= threshold and g >= threshold and b >= threshold
-        except ValueError:
-            pass
-    return False
-
-
-def upscale_png(png_path: Path, scale: int = UPSCALE_FACTOR, alpha_threshold: int = 128) -> str:
-    """Return path to a temp PNG upscaled by `scale`x using Lanczos resampling.
+def upscale_png(png_path: Path, scale: int = UPSCALE_FACTOR, alpha_threshold: int = ALPHA_THRESHOLD) -> str:
+    """Return path to a temp PNG upscaled by `scale`x using nearest-neighbor resampling.
 
     Order of operations:
-      1. Upscale first with Lanczos so edge gradients are interpolated smoothly.
-      2. Apply a hard binary alpha threshold on the high-res image.
-      3. Composite glyph over a pure-white background so that transparent pixels
-         carry white RGB values. vtracer then sees clean white in those areas
-         instead of bleed colours from PNG anti-aliasing, ensuring any background
-         layer it generates is reliably white (and safe to remove later).
+      1. Defringe: un-premultiply dark edge pixels left by background removal.
+         Background removal tools blend foreground against the original dark/black
+         background at semi-transparent edges. This leaves a dark halo whose color
+         equals fg_color * alpha. Dividing by alpha/255 recovers the true fg color.
+      2. Apply a hard binary alpha threshold on the corrected image.
+      3. Composite glyph over pure white so transparent pixels carry white RGB.
+      4. Upscale with NEAREST-NEIGHBOR — replicates pixels exactly, no color mixing.
     """
     img = Image.open(png_path).convert("RGBA")
 
-    # Step 1: Upscale with Lanczos for maximum sharpness
-    new_size = (img.width * scale, img.height * scale)
-    upscaled = img.resize(new_size, Image.LANCZOS)
+    # Step 1: Adaptive defringe — only correct against a dark background.
+    #
+    # Background removal tools leave semi-transparent edge pixels whose RGB is
+    # blended with the original background color. The un-premultiply formula
+    #   fg = observed × 255 / alpha
+    # recovers the true fg color — BUT ONLY when the original background was BLACK.
+    # If the source was a light/white background (e.g. a product photo on white),
+    # the edge pixels are already bright and dividing makes them even brighter,
+    # washing out the colors.
+    #
+    # Heuristic: measure the mean brightness of semi-transparent edge pixels
+    # (0 < alpha < 200). If their average RGB is dark → dark background → defringe.
+    # If already bright → light background → skip correction.
+    data = np.array(img, dtype=np.float32)              # (H, W, 4)
+    rgb, alpha_ch = data[:, :, :3], data[:, :, 3]       # views into data
 
-    # Step 2: Hard-edge alpha on the high-res image to kill the anti-aliased fringe
-    r, g, b, a = upscaled.split()
+    edge_mask = (alpha_ch > 0) & (alpha_ch < 200)       # semi-transparent pixels only
+    if edge_mask.any():
+        mean_brightness = rgb[edge_mask].mean()          # 0–255 scale
+    else:
+        mean_brightness = 255.0                          # no edge pixels → treat as light
+
+    DARK_BG_THRESHOLD = 100   # pixels with mean brightness below this → dark background
+    if mean_brightness < DARK_BG_THRESHOLD:
+        # Dark background: un-premultiply to recover true fg color.
+        # fg = observed × 255 / alpha
+        full_mask = alpha_ch > 0
+        rgb[full_mask] = np.clip(
+            rgb[full_mask] * (255.0 / alpha_ch[full_mask, np.newaxis]), 0, 255
+        )
+        img = Image.fromarray(data.astype(np.uint8), "RGBA")
+    # else: light/white background → no defringing needed, colors are already correct
+
+    # Step 2: Hard-edge alpha on the ORIGINAL resolution to binarize at true boundaries.
+    r, g, b, a = img.split()
     hard_alpha = a.point(lambda v: 255 if v >= alpha_threshold else 0)
 
     # Step 3: Paste glyph over white so transparent pixels' RGB becomes white.
-    # This prevents vtracer from picking up bleed colours from the transparent
-    # border pixels and generating a coloured background layer.
-    white_bg = Image.new("RGBA", upscaled.size, (255, 255, 255, 255))
-    white_bg.paste(upscaled, mask=hard_alpha)   # glyph over white; transparent → white RGB
+    white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    white_bg.paste(img, mask=hard_alpha)
     r_clean, g_clean, b_clean, _ = white_bg.split()
-    # Re-attach the binary alpha so the PNG still carries proper transparency
-    upscaled = Image.merge("RGBA", (r_clean, g_clean, b_clean, hard_alpha))
+    cleaned = Image.merge("RGBA", (r_clean, g_clean, b_clean, hard_alpha))
+
+    # Step 4: Upscale with NEAREST-NEIGHBOR — replicates pixels exactly, no blending.
+    if scale > 1:
+        new_size = (cleaned.width * scale, cleaned.height * scale)
+        cleaned = cleaned.resize(new_size, Image.NEAREST)
 
     handle, tmp_path = tempfile.mkstemp(suffix=".png")
     os.close(handle)
-    upscaled.save(tmp_path, format="PNG")
+    cleaned.save(tmp_path, format="PNG")
     return tmp_path
 
 
@@ -106,12 +126,12 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             str(temp_svg_path),
             colormode="color",          # Preserve original colors
             hierarchical="cutout",      # Cutout mode avoids layering gaps that cause holes
-            mode="polygon",             # Polygon mode: FontForge-safe (spline causes SSAddPoints crash)
-            filter_speckle=2,           # Minimal speckle removal — preserves more regions
-            color_precision=6,          # Fewer clusters → larger solid fills → no gaps
-            corner_threshold=25,        # Capture sharper corners (default 60 is too blunt)
-            length_threshold=2.0,       # Finer segment resolution for sharper edges
-            splice_threshold=45,        # Prevent unwanted spline loops at corners
+            mode="spline",              # Spline mode: smooth Bézier curves for natural fur/texture edges
+            filter_speckle=1,           # Minimal removal — fur IS made of tiny detail regions
+            color_precision=8,          # High precision → many color clusters → rich gradients
+            corner_threshold=60,        # vtracer default — let it decide corners naturally
+            length_threshold=3.0,       # Fine segment resolution to capture hair-level detail
+            splice_threshold=45,        # Prevent unwanted loops at corners
         )
 
         tree = ET.parse(temp_svg_path)
@@ -124,12 +144,7 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
         # always have a near-white fill and can be safely stripped.
         # Non-white first paths (e.g. the purple body of a donut glyph) are left
         # untouched so we don't clip the actual glyph.
-        path_tag = f"{{{namespace}}}path" if namespace else "path"
         children = list(root)
-        if children and children[0].tag == path_tag:
-            fill = children[0].attrib.get("fill", "")
-            if _is_near_white(fill):
-                root.remove(children[0])
 
         view_box = root.attrib.get("viewBox")
         if view_box:
