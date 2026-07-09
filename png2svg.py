@@ -43,7 +43,7 @@ def create_empty_svg(
 
 
 UPSCALE_FACTOR = 2  # Nearest-neighbor upscale multiplier before tracing
-ALPHA_THRESHOLD = 30   # Low threshold preserves soft/feathered glyph edges
+ALPHA_THRESHOLD = 100   # Low threshold preserves soft/feathered glyph edges
 
 def upscale_png(png_path: Path, scale: int = UPSCALE_FACTOR, alpha_threshold: int = ALPHA_THRESHOLD) -> str:
     """Return path to a temp PNG upscaled by `scale`x using nearest-neighbor resampling.
