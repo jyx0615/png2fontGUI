@@ -9,6 +9,7 @@ import subprocess
 import logging
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -46,6 +47,7 @@ app.add_middleware(
 
 # Import png2svg conversion function
 from fontTools.ttLib import TTFont
+from fontTools import subset as fonttools_subset
 
 from config import vertical_metrics
 from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
@@ -74,6 +76,31 @@ def fix_bitmap_advances(font_path: str) -> None:
             rec.metrics.Advance = min(255, max(0, round(advance * ppem / upm)))
             rec.metrics.BearingX = min(127, max(-128, round(lsb * ppem / upm)))
     font.save(font_path)
+
+
+def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
+    """Run pyftsubset in place to drop redundant color tables (SVG, sbix,
+    CBDT/CBLC, FFTM), keeping only COLRv1, and shrink the output file.
+    """
+    subset_path = f"{font_path}.subset"
+    args = [
+        font_path,
+        "--unicodes=*",
+        "--drop-tables=SVG,sbix,CBDT,CBLC,FFTM",
+        f"--flavor={flavor}",
+        f"--output-file={subset_path}",
+    ]
+    try:
+        fonttools_subset.main(args)
+        os.replace(subset_path, font_path)
+    except SystemExit:
+        logger.warning(f"pyftsubset raised SystemExit while subsetting {font_path}")
+        if os.path.exists(subset_path):
+            os.remove(subset_path)
+    except Exception as exc:
+        logger.warning(f"pyftsubset failed for {font_path}: {exc}")
+        if os.path.exists(subset_path):
+            os.remove(subset_path)
 
 
 # Helper to remove a directory tree
@@ -371,54 +398,65 @@ def run_generation_job(
         # the font's real spacing. No-op if the font has no bitmap tables.
         fix_bitmap_advances(output_ttf_color_path)
 
-        # 5. Convert TTF to WOFF using nanoemoji output
-        write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF")
+        # 5. Convert TTF to WOFF and WOFF2 in parallel (independent outputs,
+        # both just read font_ttf_input), each subsetted right after its own
+        # conversion finishes rather than waiting on the other.
+        write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF/WOFF2")
         font_ttf_input = os.path.join(temp_dir, "font.ttf")
         shutil.copy(output_ttf_color_path, font_ttf_input)
 
         output_woff_filename = f"{fontname}.woff"
         output_woff_path = os.path.join(temp_dir, output_woff_filename)
-
-        ttf2woff_cmd = ["ttf2woff", font_ttf_input, output_woff_path]
-        logger.info(f"Executing ttf2woff: {' '.join(ttf2woff_cmd)}")
-        ttf2woff_res = subprocess.run(
-            ttf2woff_cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        if ttf2woff_res.returncode != 0:
-            logger.warning(
-                f"ttf2woff failed with error: {ttf2woff_res.stderr}"
-            )
-            
-        # 6. Convert TTF to WOFF2 (ttf2woff2 reads the TTF from stdin and
-        # writes the WOFF2 to stdout)
-        write_job_status(job_id, phase="woff2", detail="Converting TTF to WOFF2")
         output_woff2_filename = f"{fontname}.woff2"
         output_woff2_path = os.path.join(temp_dir, output_woff2_filename)
 
-        ttf2woff2_bin = shutil.which("ttf2woff2") or os.path.expanduser(
-            "~/.nvm/versions/node/v24.15.0/bin/ttf2woff2"
-        )
-        logger.info(f"Executing ttf2woff2: {font_ttf_input} -> {output_woff2_path}")
-        with open(font_ttf_input, "rb") as ttf_in, open(output_woff2_path, "wb") as woff2_out:
-            ttf2woff2_res = subprocess.run(
-                [ttf2woff2_bin],
-                stdin=ttf_in,
-                stdout=woff2_out,
-                stderr=subprocess.PIPE,
+        def convert_to_woff():
+            ttf2woff_cmd = ["ttf2woff", font_ttf_input, output_woff_path]
+            logger.info(f"Executing ttf2woff: {' '.join(ttf2woff_cmd)}")
+            ttf2woff_res = subprocess.run(
+                ttf2woff_cmd,
+                capture_output=True,
+                text=True,
                 check=False,
             )
 
-        if ttf2woff2_res.returncode != 0:
-            logger.warning(
-                f"ttf2woff2 failed with error: {ttf2woff2_res.stderr.decode(errors='replace')}"
+            if ttf2woff_res.returncode != 0:
+                logger.warning(
+                    f"ttf2woff failed with error: {ttf2woff_res.stderr}"
+                )
+            elif os.path.exists(output_woff_path):
+                subset_drop_unused_tables(output_woff_path, flavor="woff")
+
+        def convert_to_woff2():
+            # ttf2woff2 reads the TTF from stdin and writes the WOFF2 to stdout
+            ttf2woff2_bin = shutil.which("ttf2woff2") or os.path.expanduser(
+                "~/.nvm/versions/node/v24.15.0/bin/ttf2woff2"
             )
-            # Remove the empty/partial output so it doesn't end up in the ZIP
-            if os.path.exists(output_woff2_path):
-                os.remove(output_woff2_path)
+            logger.info(f"Executing ttf2woff2: {font_ttf_input} -> {output_woff2_path}")
+            with open(font_ttf_input, "rb") as ttf_in, open(output_woff2_path, "wb") as woff2_out:
+                ttf2woff2_res = subprocess.run(
+                    [ttf2woff2_bin],
+                    stdin=ttf_in,
+                    stdout=woff2_out,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+            if ttf2woff2_res.returncode != 0:
+                logger.warning(
+                    f"ttf2woff2 failed with error: {ttf2woff2_res.stderr.decode(errors='replace')}"
+                )
+                # Remove the empty/partial output so it doesn't end up in the ZIP
+                if os.path.exists(output_woff2_path):
+                    os.remove(output_woff2_path)
+            elif os.path.exists(output_woff2_path):
+                subset_drop_unused_tables(output_woff2_path, flavor="woff2")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            woff_future = executor.submit(convert_to_woff)
+            woff2_future = executor.submit(convert_to_woff2)
+            woff_future.result()
+            woff2_future.result()
 
         # 7. Create ZIP file with color-optimized TTF, WOFF and WOFF2
         write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF + WOFF2")
