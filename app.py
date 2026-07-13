@@ -47,7 +47,6 @@ app.add_middleware(
 
 # Import png2svg conversion function
 from fontTools.ttLib import TTFont
-from fontTools import subset as fonttools_subset
 
 from config import vertical_metrics
 from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
@@ -79,28 +78,17 @@ def fix_bitmap_advances(font_path: str) -> None:
 
 
 def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
-    """Run pyftsubset in place to drop redundant color tables (SVG, sbix,
-    CBDT/CBLC, FFTM), keeping only COLRv1, and shrink the output file.
+    """Drop redundant color tables (SVG, sbix, CBDT/CBLC, FFTM) safely
+    using TTFont directly in place.
     """
-    subset_path = f"{font_path}.subset"
-    args = [
-        font_path,
-        "--unicodes=*",
-        "--drop-tables=SVG,sbix,CBDT,CBLC,FFTM",
-        f"--flavor={flavor}",
-        f"--output-file={subset_path}",
-    ]
     try:
-        fonttools_subset.main(args)
-        os.replace(subset_path, font_path)
-    except SystemExit:
-        logger.warning(f"pyftsubset raised SystemExit while subsetting {font_path}")
-        if os.path.exists(subset_path):
-            os.remove(subset_path)
+        font = TTFont(font_path)
+        for table in ("SVG", "sbix", "CBDT", "CBLC", "FFTM"):
+            if table in font:
+                del font[table]
+        font.save(font_path)
     except Exception as exc:
-        logger.warning(f"pyftsubset failed for {font_path}: {exc}")
-        if os.path.exists(subset_path):
-            os.remove(subset_path)
+        logger.warning(f"Failed to drop unused tables for {font_path}: {exc}")
 
 
 # Helper to remove a directory tree
