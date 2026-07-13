@@ -48,7 +48,7 @@ app.add_middleware(
 # Import png2svg conversion function
 from fontTools.ttLib import TTFont
 
-from config import vertical_metrics
+from config import vertical_metrics, svg_filename_to_codepoint
 from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
 
 
@@ -77,13 +77,104 @@ def fix_bitmap_advances(font_path: str) -> None:
     font.save(font_path)
 
 
+def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> None:
+    """Graft an sbix color table onto font_path, built from the same picosvg
+    assets maximum_color already extracted for CBDT.
+
+    macOS's native CoreText text rendering (Font Book, Preview, and other
+    non-browser apps) doesn't support COLR or CBDT/CBLC — it only draws
+    color glyphs from sbix. nanoemoji's maximum_color deliberately doesn't
+    generate sbix itself ("sbix is less x-platform than you'd guess"), so
+    without this the font has no color table macOS can render at all and
+    falls back to plain black outlines. nanoemoji's own merge tool
+    (glue_together) doesn't support sbix either, so the donor table is
+    grafted on here directly with fontTools, matching glyphs by Unicode
+    code point (the donor keeps its original u-XXXX-style names; font_path
+    has already been through nanoemoji's glyph name stripping).
+
+    Best-effort: any failure just leaves the font without sbix, same as
+    before this ran.
+    """
+    cbdt_glyphmap = build_dir / "CBDT.glyphmap"
+    parts_file = build_dir / "parts-merged.json"
+    if not cbdt_glyphmap.exists() or not parts_file.exists():
+        logger.warning("sbix: missing %s or %s, skipping", cbdt_glyphmap, parts_file)
+        return
+
+    sbix_toml = build_dir / "SBIX.toml"
+    sbix_glyphmap = build_dir / "SBIX.glyphmap"
+    sbix_donor_path = build_dir / "MergeSource.sbix.ttf"
+
+    try:
+        shutil.copy(cbdt_glyphmap, sbix_glyphmap)
+
+        config_cmd = [
+            "python3", "-m", "nanoemoji.write_config_for_mergeable",
+            "--color_format", "sbix", str(source_ttf_path), str(sbix_toml),
+        ]
+        config_res = subprocess.run(config_cmd, capture_output=True, text=True, check=False)
+        if config_res.returncode != 0:
+            logger.warning("sbix: write_config_for_mergeable failed: %s", config_res.stderr)
+            return
+
+        write_font_cmd = [
+            "python3", "-m", "nanoemoji.write_font",
+            "--config_file", "SBIX.toml",
+            "--glyphmap_file", "SBIX.glyphmap",
+            "--part_file", "parts-merged.json",
+            "--output_file", "MergeSource.sbix.ttf",
+        ]
+        write_res = subprocess.run(
+            write_font_cmd, capture_output=True, text=True, check=False, cwd=str(build_dir)
+        )
+        if write_res.returncode != 0 or not sbix_donor_path.exists():
+            logger.warning("sbix: write_font failed: %s", write_res.stderr)
+            return
+
+        target = TTFont(font_path)
+        donor = TTFont(str(sbix_donor_path))
+        cmap = target.getBestCmap()
+        donor_sbix = donor["sbix"]
+
+        for strike in donor_sbix.strikes.values():
+            remapped = {}
+            for glyph_name, glyph in strike.glyphs.items():
+                if glyph_name in (".notdef", ".space"):
+                    continue
+                try:
+                    codepoint = svg_filename_to_codepoint(glyph_name + ".svg")
+                except ValueError:
+                    continue
+                target_name = cmap.get(codepoint)
+                if target_name is None:
+                    continue
+                glyph.glyphName = target_name
+                remapped[target_name] = glyph
+            strike.glyphs.clear()
+            strike.glyphs.update(remapped)
+
+        target["sbix"] = donor_sbix
+        target.save(font_path)
+        logger.info("Successfully added sbix color table for macOS compatibility.")
+    except Exception as exc:
+        logger.warning(f"Failed to add sbix table for {font_path}: {exc}")
+
+
 def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
-    """Drop redundant color tables (SVG, sbix, CBDT/CBLC, FFTM) safely
-    using TTFont directly in place.
+    """Drop the 'SVG ' color table (plus harmless FFTM metadata) in place.
+
+    Only 'SVG ' gets dropped: its per-glyph documents carry their own
+    width/height, and Firefox sizes color glyphs off that instead of hmtx,
+    squeezing every glyph into its document's own width. sbix and CBDT/CBLC
+    don't have that problem (their advances are numeric and already patched
+    to match hmtx by fix_bitmap_advances) and are kept as color fallbacks
+    for renderers that don't support COLRv1 — notably macOS's native
+    CoreText text rendering (Font Book, Preview, etc.), which relies on
+    sbix rather than COLR.
     """
     try:
         font = TTFont(font_path)
-        for table in ("SVG", "sbix", "CBDT", "CBLC", "FFTM"):
+        for table in ("SVG ", "FFTM"):
             if table in font:
                 del font[table]
         font.save(font_path)
@@ -385,6 +476,25 @@ def run_generation_job(
         # the space) — rewrite them from hmtx so Chrome's CBDT layout honors
         # the font's real spacing. No-op if the font has no bitmap tables.
         fix_bitmap_advances(output_ttf_color_path)
+
+        # macOS's native CoreText rendering (Font Book, Preview, etc.) only
+        # draws color glyphs from sbix, which maximum_color never generates.
+        # Graft one on from the same picosvg/bitmap assets used for CBDT.
+        # No-op if those assets aren't there (e.g. nanoemoji step failed).
+        add_sbix_table(output_ttf_color_path, Path(temp_dir) / "build", output_ttf_path)
+
+        # Drop the redundant 'SVG ' color table from the TTF itself, not
+        # just the WOFF/WOFF2 — its raw per-glyph documents (built from the
+        # traced PNG, each with its own width/height) don't share the font's
+        # hmtx-based layout, and Firefox renders color glyphs from the
+        # 'SVG ' table when present, in preference to COLR. Left in place,
+        # that squeezes every glyph into its own document width instead of
+        # its real advance, so words run together in Firefox while Chrome
+        # (which prefers COLR) looks fine. COLR/CPAL from nanoemoji already
+        # carries full color fidelity, so this table is safe to drop
+        # everywhere; sbix/CBDT/CBLC are kept as color fallbacks for
+        # renderers without COLRv1 support.
+        subset_drop_unused_tables(output_ttf_color_path, flavor="ttf")
 
         # 5. Convert TTF to WOFF and WOFF2 in parallel (independent outputs,
         # both just read font_ttf_input), each subsetted right after its own

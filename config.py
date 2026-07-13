@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -5,6 +6,22 @@ try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
+
+
+def svg_filename_to_codepoint(filename: str) -> int:
+    stem = filename.rsplit(".", 1)[0]
+    prefix = stem.split("_", 1)[0]
+
+    if len(prefix) == 1:
+        return ord(prefix)
+
+    if re.fullmatch(r"u[0-9a-fA-F]{4,6}", prefix):
+        return int(prefix[1:], 16)
+
+    if re.fullmatch(r"[0-9a-fA-F]{4,6}", prefix):
+        return int(prefix, 16)
+
+    raise ValueError(f"Cannot infer a Unicode code point from {filename!r}.")
 
 
 @dataclass(frozen=True)

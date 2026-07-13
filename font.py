@@ -1,24 +1,8 @@
 import fontforge
 import os
-import re
 import argparse
 
-from config import CONFIG, vertical_metrics
-
-def svg_filename_to_codepoint(filename: str) -> int:
-    stem = filename.rsplit(".", 1)[0]
-    prefix = stem.split("_", 1)[0]
-
-    if len(prefix) == 1:
-        return ord(prefix)
-
-    if re.fullmatch(r"u[0-9a-fA-F]{4,6}", prefix):
-        return int(prefix[1:], 16)
-
-    if re.fullmatch(r"[0-9a-fA-F]{4,6}", prefix):
-        return int(prefix, 16)
-
-    raise ValueError(f"Cannot infer a Unicode code point from {filename!r}.")
+from config import CONFIG, vertical_metrics, svg_filename_to_codepoint
 
 
 def import_glyphs_from_svg(
@@ -65,6 +49,13 @@ def import_glyphs_from_svg(
             glyph = font.createChar(char_code)
             glyph.glyphname = f"{filename.rsplit('.', 1)[0]}"
             glyph.importOutlines(svg_path)
+            # vtracer emits hundreds of small overlapping contours per glyph
+            # (fur/texture detail) with no guaranteed consistent winding.
+            # Union them into a single cleanly-wound outline now, before any
+            # other processing — otherwise rasterizers that don't tolerate
+            # ambiguous overlaps (e.g. Firefox) fill counters solid and fuse
+            # adjacent strokes together.
+            glyph.removeOverlap()
 
             xmin, ymin, xmax, ymax = glyph.boundingBox()
             width = xmax - xmin
