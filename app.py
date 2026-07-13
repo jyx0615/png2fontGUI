@@ -135,6 +135,8 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
         donor = TTFont(str(sbix_donor_path))
         cmap = target.getBestCmap()
         donor_sbix = donor["sbix"]
+        target_glyf = target["glyf"]
+        upm = target["head"].unitsPerEm
 
         for strike in donor_sbix.strikes.values():
             remapped = {}
@@ -149,6 +151,21 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
                 if target_name is None:
                     continue
                 glyph.glyphName = target_name
+                # CoreText positions sbix bitmaps relative to the lower-left
+                # corner of the glyph's glyf bounding box, not the glyph
+                # origin nanoemoji assumes (per Apple's TrueType Reference
+                # Manual; the OpenType spec says origin). Every bitmap here
+                # is a full-line render sharing one originOffset, so glyphs
+                # with different yMin land at different heights in Safari —
+                # descenders visibly drop. Subtract each glyph's bbox corner
+                # (in strike pixels) so bbox-relative placement lands where
+                # origin-relative placement intended. Safari/CoreText is the
+                # only renderer that reaches sbix (everything else prefers
+                # COLR or CBDT), so baking in Apple's interpretation is safe.
+                outline = target_glyf[target_name]
+                if outline.numberOfContours != 0:
+                    glyph.originOffsetX -= round(outline.xMin * strike.ppem / upm)
+                    glyph.originOffsetY -= round(outline.yMin * strike.ppem / upm)
                 remapped[target_name] = glyph
             strike.glyphs.clear()
             strike.glyphs.update(remapped)
