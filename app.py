@@ -49,7 +49,7 @@ app.add_middleware(
 from fontTools.ttLib import TTFont
 
 from config import vertical_metrics, svg_filename_to_codepoint
-from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent
+from png2svg import convert_pngs_to_svgs, shift_svgs_for_descent, flatten_svgs_for_outlines
 
 
 def fix_bitmap_advances(font_path: str) -> None:
@@ -356,6 +356,15 @@ def run_generation_job(
         shift_svgs_for_descent(svg_folder, svg_shifted_folder, target_upm=upm, descent=descent)
         logger.info("Applied vertical metrics to traced SVGs.")
 
+        # 1c. Flatten each color SVG into a single silhouette path for the
+        # FontForge (glyf outline) pass.  Stacked tracing produces hundreds
+        # of overlapping paths per glyph, which FontForge's removeOverlap
+        # chokes on (minutes per glyph); skia-pathops unions them in seconds.
+        # addsvg still consumes the full-color shifted folder below.
+        svg_outline_folder = Path(temp_dir) / "svg_glyphs_outline"
+        flatten_svgs_for_outlines(svg_shifted_folder, svg_outline_folder)
+        logger.info("Flattened SVGs to silhouettes for FontForge.")
+
         # 2. Generate TTF using FontForge
         write_job_status(job_id, phase="fontforge", detail="Compiling TTF with FontForge")
         output_ttf_filename = f"{fontname}.ttf"
@@ -365,7 +374,7 @@ def run_generation_job(
             "fontforge",
             "-script",
             "font.py",
-            str(svg_shifted_folder),
+            str(svg_outline_folder),
             "--output",
             output_ttf_path,
             "--fontname",

@@ -257,6 +257,51 @@ def shift_svgs_for_descent(
         tree.write(out_directory / svg_path.name, encoding="utf-8", xml_declaration=False)
 
 
+def flatten_svgs_for_outlines(svg_folder: Path | str, out_folder: Path | str) -> None:
+    """Union each SVG's color regions into one silhouette path for FontForge.
+
+    Stacked tracing emits hundreds of overlapping color paths per glyph.
+    FontForge only builds the monochrome 'glyf' outline from these SVGs, and
+    its removeOverlap() takes minutes per glyph on that input (the color
+    rendering comes from the 'SVG '/sbix tables built by addsvg, not from
+    this folder).  Pre-union everything with skia-pathops (~seconds) and hand
+    FontForge a single clean silhouette instead.
+    """
+    from picosvg.svg import SVG
+    from picosvg import svg_pathops
+    from picosvg.svg_types import SVGPath
+
+    src_directory = Path(svg_folder)
+    out_directory = Path(out_folder)
+    out_directory.mkdir(parents=True, exist_ok=True)
+
+    for svg_path in sorted(src_directory.glob("*.svg")):
+        pico = SVG.parse(str(svg_path)).topicosvg()
+        shapes = list(pico.shapes())
+        vb = pico.view_box()
+
+        if shapes:
+            merged = SVGPath.from_commands(
+                svg_pathops.union(
+                    [s.as_cmd_seq() for s in shapes],
+                    [getattr(s, "fill_rule", "nonzero") or "nonzero" for s in shapes],
+                )
+            )
+            path_markup = f'<path d="{merged.d}" fill="black"/>'
+        else:
+            # Empty glyph (e.g. the space placeholder) — keep an ink-free SVG
+            # with the same viewBox so advance-width handling stays intact.
+            path_markup = ""
+
+        out_markup = (
+            f'<svg xmlns="{SVG_NS}" '
+            f'viewBox="{vb.x:g} {vb.y:g} {vb.w:g} {vb.h:g}" '
+            f'width="{vb.w:g}" height="{vb.h:g}">'
+            f"{path_markup}</svg>"
+        )
+        (out_directory / svg_path.name).write_text(out_markup, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert PNG glyphs to normalized SVGs."
