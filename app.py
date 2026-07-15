@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -77,6 +78,63 @@ def fix_bitmap_advances(font_path: str) -> None:
     font.save(font_path)
 
 
+# sbix strike height in pixels. CoreText scales sbix bitmaps up to the
+# requested text size, so the strike must be big enough to stay sharp at
+# display sizes. CBDT can't follow: its uint8 glyph metrics cap that strike
+# at 255px (less for wide glyphs), which is why CBDT stays at nanoemoji's
+# 128px default while sbix (int16 metrics) gets its own high-res render.
+SBIX_STRIKE_RESOLUTION = 512
+
+
+def write_sbix_glyphmap(build_dir: Path, cbdt_glyphmap: Path, sbix_glyphmap: Path) -> int | None:
+    """Write SBIX.glyphmap, re-rendering strike bitmaps at high resolution.
+
+    The CBDT glyphmap points at 128px bitmaps. Those are resvg renders of the
+    traced picosvgs, so re-rendering the same picosvgs at
+    SBIX_STRIKE_RESOLUTION (with resvg, the tool maximum_color itself uses)
+    costs nothing in fidelity and gives CoreText a strike that matches the
+    vector tables at display sizes. Falls back to reusing the 128px CBDT
+    bitmaps if resvg is missing or any render fails. Returns the strike
+    height rendered, or None when falling back.
+    """
+    # resvg comes from the resvg-cli pip package, installed alongside the
+    # interpreter — fall back there when the env isn't on PATH.
+    resvg_bin = shutil.which("resvg") or str(Path(sys.executable).parent / "resvg")
+    if not Path(resvg_bin).exists():
+        logger.warning("sbix: resvg not found, reusing CBDT strike bitmaps")
+        shutil.copy(cbdt_glyphmap, sbix_glyphmap)
+        return None
+
+    bitmap_dir = build_dir / "sbix_bitmap"
+    bitmap_dir.mkdir(exist_ok=True)
+    rows = []
+    for line in cbdt_glyphmap.read_text().splitlines():
+        if not line.strip():
+            continue
+        columns = line.split(",")
+        svg_rel, bitmap_rel = columns[0], columns[1]
+        if not svg_rel or not bitmap_rel:
+            # Bitmap-less row (e.g. the blank space glyph) — keep as-is.
+            rows.append(line)
+            continue
+        out_png = bitmap_dir / Path(bitmap_rel).name
+        render = subprocess.run(
+            [resvg_bin, "-h", str(SBIX_STRIKE_RESOLUTION), str(build_dir / svg_rel), str(out_png)],
+            capture_output=True, text=True, check=False,
+        )
+        if render.returncode != 0 or not out_png.exists():
+            logger.warning(
+                "sbix: resvg failed on %s (%s), reusing CBDT strike bitmaps",
+                svg_rel, (render.stderr or "").strip(),
+            )
+            shutil.copy(cbdt_glyphmap, sbix_glyphmap)
+            return None
+        columns[1] = f"sbix_bitmap/{out_png.name}"
+        rows.append(",".join(columns))
+    sbix_glyphmap.write_text("\n".join(rows) + "\n")
+    return SBIX_STRIKE_RESOLUTION
+
+
 def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> None:
     """Graft an sbix color table onto font_path, built from the same picosvg
     assets maximum_color already extracted for CBDT.
@@ -106,7 +164,7 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
     sbix_donor_path = build_dir / "MergeSource.sbix.ttf"
 
     try:
-        shutil.copy(cbdt_glyphmap, sbix_glyphmap)
+        strike_res = write_sbix_glyphmap(build_dir, cbdt_glyphmap, sbix_glyphmap)
 
         config_cmd = [
             "python3", "-m", "nanoemoji.write_config_for_mergeable",
@@ -124,6 +182,8 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
             "--part_file", "parts-merged.json",
             "--output_file", "MergeSource.sbix.ttf",
         ]
+        if strike_res is not None:
+            write_font_cmd += ["--bitmap_resolution", str(strike_res)]
         write_res = subprocess.run(
             write_font_cmd, capture_output=True, text=True, check=False, cwd=str(build_dir)
         )

@@ -43,6 +43,14 @@ def create_empty_svg(
 
 
 UPSCALE_FACTOR = 2  # Nearest-neighbor upscale multiplier before tracing
+
+# Same-fill stroke width added to every traced path, in traced-pixel units
+# (~0.6% of the em after scaling to UPM). Cutout tracing tiles color regions
+# edge-to-edge, so renderer anti-aliasing lets the background show through
+# shared edges as hairline seams when zoomed. Stroking each region with its
+# own fill color dilates it by half this width on each side, overlapping
+# neighbors just enough to hide the seams while staying invisible itself.
+SEAM_STROKE_WIDTH = 2
 ALPHA_THRESHOLD = 220   # Low threshold preserves soft/feathered glyph edges
 
 def upscale_png(png_path: Path, scale: int = UPSCALE_FACTOR, alpha_threshold: int = ALPHA_THRESHOLD) -> str:
@@ -125,7 +133,7 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             upscaled_png_path,
             str(temp_svg_path),
             colormode="color",          # Preserve original colors
-            hierarchical="stacked",     # Stacked mode overlaps regions so shared edges don't show anti-aliasing seams
+            hierarchical="cutout",      # Cutout mode: exact region edges (best quality); seams are covered by the same-fill strokes added below
             mode="spline",              # Spline mode: smooth Bézier curves for natural fur/texture edges
             filter_speckle=1,           # Minimal removal — fur IS made of tiny detail regions
             color_precision=8,          # High precision → many color clusters → rich gradients
@@ -137,6 +145,16 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
         tree = ET.parse(temp_svg_path)
         root = tree.getroot()
         namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+
+        # Cover cutout-mode seams: stroke every region with its own fill so
+        # adjacent regions overlap slightly (see SEAM_STROKE_WIDTH).
+        path_tag = f"{{{namespace}}}path" if namespace else "path"
+        for path in root.iter(path_tag):
+            fill = path.get("fill")
+            if fill and fill != "none":
+                path.set("stroke", fill)
+                path.set("stroke-width", str(SEAM_STROKE_WIDTH))
+                path.set("stroke-linejoin", "round")
 
         # Remove the first <path> only if it is a near-white background fill.
         # In cutout mode vtracer injects a background rectangle as the first child;
@@ -276,7 +294,14 @@ def flatten_svgs_for_outlines(svg_folder: Path | str, out_folder: Path | str) ->
     out_directory.mkdir(parents=True, exist_ok=True)
 
     for svg_path in sorted(src_directory.glob("*.svg")):
-        pico = SVG.parse(str(svg_path)).topicosvg()
+        # Drop the seam-cover strokes first: they only dilate each region by
+        # ~0.6% (invisible in a monochrome silhouette) but picosvg converts
+        # every stroke into an extra fill shape, doubling the union work.
+        tree = ET.parse(svg_path)
+        for el in tree.iter():
+            for attr in ("stroke", "stroke-width", "stroke-linejoin"):
+                el.attrib.pop(attr, None)
+        pico = SVG.fromstring(ET.tostring(tree.getroot(), encoding="unicode")).topicosvg()
         shapes = list(pico.shapes())
         vb = pico.view_box()
 
