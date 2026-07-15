@@ -125,7 +125,7 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             upscaled_png_path,
             str(temp_svg_path),
             colormode="color",          # Preserve original colors
-            hierarchical="cutout",      # Cutout mode avoids layering gaps that cause holes
+            hierarchical="stacked",     # Stacked mode overlaps regions so shared edges don't show anti-aliasing seams
             mode="spline",              # Spline mode: smooth Bézier curves for natural fur/texture edges
             filter_speckle=1,           # Minimal removal — fur IS made of tiny detail regions
             color_precision=8,          # High precision → many color clusters → rich gradients
