@@ -1,13 +1,17 @@
+import argparse
 import os
+import shutil
+import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-import vtracer
-import subprocess
-import argparse
+
 import numpy as np
+import vtracer
 from PIL import Image
-import shutil
+from picosvg.svg import SVG
+from picosvg import svg_pathops
+from picosvg.svg_types import SVGPath
 
 from config import CONFIG
 
@@ -42,75 +46,50 @@ def create_empty_svg(
     tree.write(svg_output_path, encoding="utf-8", xml_declaration=False)
 
 
-UPSCALE_FACTOR = 2  # Nearest-neighbor upscale multiplier before tracing
+UPSCALE_FACTOR = 2  # nearest-neighbor upscale before tracing
 
-# Same-fill stroke width added to every traced path, in traced-pixel units
-# (~0.6% of the em after scaling to UPM). Cutout tracing tiles color regions
-# edge-to-edge, so renderer anti-aliasing lets the background show through
-# shared edges as hairline seams when zoomed. Stroking each region with its
-# own fill color dilates it by half this width on each side, overlapping
-# neighbors just enough to hide the seams while staying invisible itself.
+# Same-fill stroke width (traced-pixel units, ~0.6% of the em). Cutout tracing
+# tiles regions edge-to-edge, so anti-aliasing shows the background through
+# shared edges as hairline seams; stroking each region with its own fill
+# overlaps neighbors just enough to hide them.
 SEAM_STROKE_WIDTH = 2
-ALPHA_THRESHOLD = 220   # Low threshold preserves soft/feathered glyph edges
+ALPHA_THRESHOLD = 220
 
 def upscale_png(png_path: Path, scale: int = UPSCALE_FACTOR, alpha_threshold: int = ALPHA_THRESHOLD) -> str:
-    """Return path to a temp PNG upscaled by `scale`x using nearest-neighbor resampling.
-
-    Order of operations:
-      1. Defringe: un-premultiply dark edge pixels left by background removal.
-         Background removal tools blend foreground against the original dark/black
-         background at semi-transparent edges. This leaves a dark halo whose color
-         equals fg_color * alpha. Dividing by alpha/255 recovers the true fg color.
-      2. Apply a hard binary alpha threshold on the corrected image.
-      3. Composite glyph over pure white so transparent pixels carry white RGB.
-      4. Upscale with NEAREST-NEIGHBOR — replicates pixels exactly, no color mixing.
-    """
+    """Return path to a temp PNG prepared for tracing: defringe, binarize alpha,
+    composite over white, then upscale `scale`x with nearest-neighbor."""
     img = Image.open(png_path).convert("RGBA")
 
-    # Step 1: Adaptive defringe — only correct against a dark background.
-    #
-    # Background removal tools leave semi-transparent edge pixels whose RGB is
-    # blended with the original background color. The un-premultiply formula
-    #   fg = observed × 255 / alpha
-    # recovers the true fg color — BUT ONLY when the original background was BLACK.
-    # If the source was a light/white background (e.g. a product photo on white),
-    # the edge pixels are already bright and dividing makes them even brighter,
-    # washing out the colors.
-    #
-    # Heuristic: measure the mean brightness of semi-transparent edge pixels
-    # (0 < alpha < 200). If their average RGB is dark → dark background → defringe.
-    # If already bright → light background → skip correction.
-    data = np.array(img, dtype=np.float32)              # (H, W, 4)
-    rgb, alpha_ch = data[:, :, :3], data[:, :, 3]       # views into data
+    # Defringe: background removal leaves semi-transparent edge pixels blended
+    # with the original background. Un-premultiplying (fg = observed × 255 / alpha)
+    # recovers the true color, but only if the background was dark — on a light
+    # background it would wash out the colors instead. Use the mean brightness
+    # of semi-transparent pixels to decide.
+    data = np.array(img, dtype=np.float32)
+    rgb, alpha_ch = data[:, :, :3], data[:, :, 3]
 
-    edge_mask = (alpha_ch > 0) & (alpha_ch < 200)       # semi-transparent pixels only
-    if edge_mask.any():
-        mean_brightness = rgb[edge_mask].mean()          # 0–255 scale
-    else:
-        mean_brightness = 255.0                          # no edge pixels → treat as light
+    edge_mask = (alpha_ch > 0) & (alpha_ch < 200)
+    mean_brightness = rgb[edge_mask].mean() if edge_mask.any() else 255.0
 
-    DARK_BG_THRESHOLD = 100   # pixels with mean brightness below this → dark background
+    DARK_BG_THRESHOLD = 100
     if mean_brightness < DARK_BG_THRESHOLD:
-        # Dark background: un-premultiply to recover true fg color.
-        # fg = observed × 255 / alpha
         full_mask = alpha_ch > 0
         rgb[full_mask] = np.clip(
             rgb[full_mask] * (255.0 / alpha_ch[full_mask, np.newaxis]), 0, 255
         )
         img = Image.fromarray(data.astype(np.uint8), "RGBA")
-    # else: light/white background → no defringing needed, colors are already correct
 
-    # Step 2: Hard-edge alpha on the ORIGINAL resolution to binarize at true boundaries.
+    # Binarize alpha at the original resolution, then composite over white so
+    # transparent pixels carry white RGB.
     r, g, b, a = img.split()
     hard_alpha = a.point(lambda v: 255 if v >= alpha_threshold else 0)
 
-    # Step 3: Paste glyph over white so transparent pixels' RGB becomes white.
     white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
     white_bg.paste(img, mask=hard_alpha)
     r_clean, g_clean, b_clean, _ = white_bg.split()
     cleaned = Image.merge("RGBA", (r_clean, g_clean, b_clean, hard_alpha))
 
-    # Step 4: Upscale with NEAREST-NEIGHBOR — replicates pixels exactly, no blending.
+    # Nearest-neighbor replicates pixels exactly — no color blending.
     if scale > 1:
         new_size = (cleaned.width * scale, cleaned.height * scale)
         cleaned = cleaned.resize(new_size, Image.NEAREST)
@@ -125,21 +104,20 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
     with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
         temp_svg_path = temp_file.name
 
-    # Upscale PNG before tracing so vtracer has more pixels to work with
     upscaled_png_path = upscale_png(png_path)
 
     try:
         vtracer.convert_image_to_svg_py(
             upscaled_png_path,
             str(temp_svg_path),
-            colormode="color",          # Preserve original colors
-            hierarchical="cutout",      # Cutout mode: exact region edges (best quality); seams are covered by the same-fill strokes added below
-            mode="spline",              # Spline mode: smooth Bézier curves for natural fur/texture edges
-            filter_speckle=1,           # Minimal removal — fur IS made of tiny detail regions
-            color_precision=8,          # High precision → many color clusters → rich gradients
-            corner_threshold=60,        # vtracer default — let it decide corners naturally
-            length_threshold=3.0,       # Fine segment resolution to capture hair-level detail
-            splice_threshold=45,        # Prevent unwanted loops at corners
+            colormode="color",
+            hierarchical="cutout",      # exact region edges; seams covered by strokes below
+            mode="spline",              # smooth Bézier curves
+            filter_speckle=1,           # keep tiny detail regions (fur/texture)
+            color_precision=8,          # many color clusters → rich gradients
+            corner_threshold=60,
+            length_threshold=3.0,
+            splice_threshold=45,
         )
 
         tree = ET.parse(temp_svg_path)
@@ -156,14 +134,6 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
                 path.set("stroke-width", str(SEAM_STROKE_WIDTH))
                 path.set("stroke-linejoin", "round")
 
-        # Remove the first <path> only if it is a near-white background fill.
-        # In cutout mode vtracer injects a background rectangle as the first child;
-        # since we pre-filled transparent pixels with white, that rectangle will
-        # always have a near-white fill and can be safely stripped.
-        # Non-white first paths (e.g. the purple body of a donut glyph) are left
-        # untouched so we don't clip the actual glyph.
-        children = list(root)
-
         view_box = root.attrib.get("viewBox")
         if view_box:
             _, _, source_width, source_height = map(float, view_box.split())
@@ -171,19 +141,16 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             source_width = float(root.attrib.get("width", width))
             source_height = float(root.attrib.get("height", height))
 
-        # Scale by height only — preserves the PNG's natural aspect ratio so
-        # that narrow glyphs ("I", "l") stay narrow and wide ones ("W", "M")
-        # stay wide.  The SVG width reflects the actual glyph advance width.
+        # Scale by height only so the glyph keeps its natural aspect ratio;
+        # the SVG width becomes the glyph's advance width.
         scale = target_upm / source_height
         scaled_width = round(source_width * scale)
 
         children = list(root)
 
-        # Traced SVGs are metric-independent: the PNG canvas bottom sits on
-        # y=0 with all ink above it at negative y.  Vertical font metrics
-        # (descent/baseline placement) are applied later at font-build time
-        # by shift_svgs_for_descent(), so changing metrics never requires
-        # re-tracing.
+        # Keep traced SVGs metric-independent: canvas bottom on y=0, ink at
+        # negative y. Vertical metrics are applied later by
+        # shift_svgs_for_descent(), so changing metrics never requires re-tracing.
         wrapper_tag = f"{{{namespace}}}g" if namespace else "g"
         wrapper = ET.Element(
             wrapper_tag,
@@ -243,14 +210,11 @@ def convert_pngs_to_svgs(png_folder: Path | str, svg_output: Path | str, target_
 def shift_svgs_for_descent(
     svg_folder: Path | str, out_folder: Path | str, target_upm: int, descent: int
 ) -> None:
-    """Apply vertical font metrics to traced SVGs at font-build time.
+    """Shift traced SVGs down by `descent` units at font-build time.
 
-    Traced SVGs put the PNG canvas bottom on y=0 (baseline).  The font treats
-    the canvas as the full em box (top = ascent line, bottom = -descent), so
-    shift the content down by `descent` units: canvas top lands at
-    -(upm - descent) and canvas bottom at +descent, leaving descender room
-    below the baseline for g/j/p/q/y.  This is a cheap XML rewrite — changing
-    ascent/descent/line-height only re-runs this and FontForge, not the trace.
+    Traced SVGs put the canvas bottom on y=0; the font treats the canvas as
+    the full em box, so shifting leaves descender room below the baseline.
+    Cheap XML rewrite — metric changes never require re-tracing.
     """
     src_directory = Path(svg_folder)
     out_directory = Path(out_folder)
@@ -278,25 +242,20 @@ def shift_svgs_for_descent(
 def flatten_svgs_for_outlines(svg_folder: Path | str, out_folder: Path | str) -> None:
     """Union each SVG's color regions into one silhouette path for FontForge.
 
-    Stacked tracing emits hundreds of overlapping color paths per glyph.
-    FontForge only builds the monochrome 'glyf' outline from these SVGs, and
-    its removeOverlap() takes minutes per glyph on that input (the color
-    rendering comes from the 'SVG '/sbix tables built by addsvg, not from
-    this folder).  Pre-union everything with skia-pathops (~seconds) and hand
-    FontForge a single clean silhouette instead.
+    FontForge only needs the monochrome 'glyf' outline from these SVGs (color
+    comes from the 'SVG '/sbix tables), and its removeOverlap() takes minutes
+    per glyph on hundreds of overlapping paths. Pre-unioning with skia-pathops
+    takes seconds.
     """
-    from picosvg.svg import SVG
-    from picosvg import svg_pathops
-    from picosvg.svg_types import SVGPath
 
     src_directory = Path(svg_folder)
     out_directory = Path(out_folder)
     out_directory.mkdir(parents=True, exist_ok=True)
 
     for svg_path in sorted(src_directory.glob("*.svg")):
-        # Drop the seam-cover strokes first: they only dilate each region by
-        # ~0.6% (invisible in a monochrome silhouette) but picosvg converts
-        # every stroke into an extra fill shape, doubling the union work.
+        # Drop the seam-cover strokes: invisible in a monochrome silhouette,
+        # but picosvg would convert each into an extra fill shape, doubling
+        # the union work.
         tree = ET.parse(svg_path)
         for el in tree.iter():
             for attr in ("stroke", "stroke-width", "stroke-linejoin"):
@@ -314,8 +273,7 @@ def flatten_svgs_for_outlines(svg_folder: Path | str, out_folder: Path | str) ->
             )
             path_markup = f'<path d="{merged.d}" fill="black"/>'
         else:
-            # Empty glyph (e.g. the space placeholder) — keep an ink-free SVG
-            # with the same viewBox so advance-width handling stays intact.
+            # Empty glyph (e.g. space) — keep the viewBox so advance width stays intact.
             path_markup = ""
 
         out_markup = (

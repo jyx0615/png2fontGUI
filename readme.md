@@ -41,6 +41,10 @@ CLI arguments override values in `config.toml`. Precedence: CLI > `config.toml`.
 
 **Scripts & usage**
 
+- `app.py` — FastAPI routes (submit job, poll status, download result); the actual work lives in:
+  - `pipeline.py` — the per-job generation pipeline (trace → FontForge → color tables → WOFF/WOFF2 → ZIP).
+  - `job_store.py` — disk-backed job status store (status.json per job, TTL sweep, orphan detection).
+  - `font_tables.py` — TTF post-processing (bitmap advances, sbix grafting, table trimming).
 - `png2svg.py` — trace PNGs to normalized SVGs.
   - Default: `python3 png2svg.py`
   - Options: `--png_folder <dir>` and `--svg_output <dir>` (defaults: `glyphs`, `svg_glyphs`).
