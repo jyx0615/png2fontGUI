@@ -1,7 +1,7 @@
 """The font generation pipeline, run in a worker thread per job.
 
 PNG glyphs → traced SVGs → FontForge TTF → color tables (addsvg + nanoemoji)
-→ post-processing → WOFF/WOFF2 → ZIP.
+→ post-processing → WOFF2 → ZIP.
 """
 
 import logging
@@ -11,11 +11,15 @@ import subprocess
 import threading
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from config import vertical_metrics
-from font_tables import add_sbix_table, fix_bitmap_advances, subset_drop_unused_tables
+from font_tables import (
+    add_sbix_table,
+    normalize_color_svg_viewports,
+    fix_bitmap_advances,
+    subset_drop_unused_tables,
+)
 from job_store import HEARTBEAT_SECONDS, job_dir, write_job_status
 from png2svg import convert_pngs_to_svgs, flatten_svgs_for_outlines, shift_svgs_for_descent
 
@@ -128,6 +132,12 @@ def run_generation_job(
 
         logger.info("FontForge TTF generation completed successfully.")
 
+        # 2b. Resize each color SVG's canvas to match its real hmtx advance
+        # (now final) so Firefox's width-based OT-SVG sizing lines up with
+        # the outline glyph instead of the traced canvas's natural aspect.
+        align_color_svg_widths(svg_shifted_folder, output_ttf_path)
+        logger.info("Aligned color SVG widths to font advances.")
+
         # 3. Embed the color SVG documents as an 'SVG ' table (addsvg)
         addsvg_bin = shutil.which("addsvg") or "/opt/miniconda3/envs/genFont/bin/addsvg"
         addsvg_cmd = [addsvg_bin, str(svg_shifted_folder), output_ttf_path]
@@ -172,15 +182,14 @@ def run_generation_job(
         add_sbix_table(output_ttf_color_path, Path(temp_dir) / "build", output_ttf_path)
         subset_drop_unused_tables(output_ttf_color_path, flavor="ttf")
 
-        # 6. Convert TTF to WOFF and WOFF2 in parallel, each trimmed right
-        # after its own conversion finishes.
-        write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF/WOFF2")
-        output_woff_path, output_woff2_path = convert_to_webfonts(
-            temp_dir, output_ttf_color_path, fontname
-        )
+        # 6. Convert TTF to WOFF2 (the one web format all three target
+        # browsers — Chrome, Firefox, Safari — support; plain WOFF is
+        # legacy-only and no longer produced).
+        write_job_status(job_id, phase="woff", detail="Converting TTF to WOFF2")
+        output_woff2_path = convert_to_webfont(temp_dir, output_ttf_color_path, fontname)
 
-        # 7. Create ZIP file with color-optimized TTF, WOFF and WOFF2
-        write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF + WOFF2")
+        # 7. Create ZIP file with color-optimized TTF and WOFF2
+        write_job_status(job_id, phase="zipping", detail="Packaging TTF + WOFF2")
         output_zip_filename = f"{fontname}_fonts.zip"
         output_zip_path = os.path.join(temp_dir, output_zip_filename)
 
@@ -188,7 +197,6 @@ def run_generation_job(
         with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for path, arcname in (
                 (output_ttf_color_path, f"{fontname}.ttf"),
-                (output_woff_path, f"{fontname}.woff"),
                 (output_woff2_path, f"{fontname}.woff2"),
             ):
                 if os.path.exists(path):
@@ -273,64 +281,39 @@ def run_maximum_color(
     return output_ttf_color_path
 
 
-def convert_to_webfonts(temp_dir: str, ttf_path: str, fontname: str) -> tuple[str, str]:
-    """Convert the final TTF to WOFF and WOFF2 in parallel.
+def convert_to_webfont(temp_dir: str, ttf_path: str, fontname: str) -> str:
+    """Convert the final TTF to WOFF2.
 
-    Returns the (woff_path, woff2_path) targets; either file may be missing
-    if its converter failed (callers must check existence).
+    Returns the woff2_path target; the file may be missing if conversion
+    failed (callers must check existence).
     """
     font_ttf_input = os.path.join(temp_dir, "font.ttf")
     shutil.copy(ttf_path, font_ttf_input)
 
-    output_woff_path = os.path.join(temp_dir, f"{fontname}.woff")
     output_woff2_path = os.path.join(temp_dir, f"{fontname}.woff2")
 
-    def convert_to_woff():
-        ttf2woff_cmd = ["ttf2woff", font_ttf_input, output_woff_path]
-        logger.info(f"Executing ttf2woff: {' '.join(ttf2woff_cmd)}")
-        ttf2woff_res = subprocess.run(
-            ttf2woff_cmd,
-            capture_output=True,
-            text=True,
+    # ttf2woff2 reads stdin and writes stdout
+    ttf2woff2_bin = shutil.which("ttf2woff2") or os.path.expanduser(
+        "~/.nvm/versions/node/v24.15.0/bin/ttf2woff2"
+    )
+    logger.info(f"Executing ttf2woff2: {font_ttf_input} -> {output_woff2_path}")
+    with open(font_ttf_input, "rb") as ttf_in, open(output_woff2_path, "wb") as woff2_out:
+        ttf2woff2_res = subprocess.run(
+            [ttf2woff2_bin],
+            stdin=ttf_in,
+            stdout=woff2_out,
+            stderr=subprocess.PIPE,
             check=False,
         )
 
-        if ttf2woff_res.returncode != 0:
-            logger.warning(
-                f"ttf2woff failed with error: {ttf2woff_res.stderr}"
-            )
-        elif os.path.exists(output_woff_path):
-            subset_drop_unused_tables(output_woff_path, flavor="woff")
-
-    def convert_to_woff2():
-        # ttf2woff2 reads stdin and writes stdout
-        ttf2woff2_bin = shutil.which("ttf2woff2") or os.path.expanduser(
-            "~/.nvm/versions/node/v24.15.0/bin/ttf2woff2"
+    if ttf2woff2_res.returncode != 0:
+        logger.warning(
+            f"ttf2woff2 failed with error: {ttf2woff2_res.stderr.decode(errors='replace')}"
         )
-        logger.info(f"Executing ttf2woff2: {font_ttf_input} -> {output_woff2_path}")
-        with open(font_ttf_input, "rb") as ttf_in, open(output_woff2_path, "wb") as woff2_out:
-            ttf2woff2_res = subprocess.run(
-                [ttf2woff2_bin],
-                stdin=ttf_in,
-                stdout=woff2_out,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
+        # Don't let a partial output end up in the ZIP
+        if os.path.exists(output_woff2_path):
+            os.remove(output_woff2_path)
+    elif os.path.exists(output_woff2_path):
+        subset_drop_unused_tables(output_woff2_path, flavor="woff2")
 
-        if ttf2woff2_res.returncode != 0:
-            logger.warning(
-                f"ttf2woff2 failed with error: {ttf2woff2_res.stderr.decode(errors='replace')}"
-            )
-            # Don't let a partial output end up in the ZIP
-            if os.path.exists(output_woff2_path):
-                os.remove(output_woff2_path)
-        elif os.path.exists(output_woff2_path):
-            subset_drop_unused_tables(output_woff2_path, flavor="woff2")
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        woff_future = executor.submit(convert_to_woff)
-        woff2_future = executor.submit(convert_to_woff2)
-        woff_future.result()
-        woff2_future.result()
-
-    return output_woff_path, output_woff2_path
+    return output_woff2_path

@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
@@ -11,6 +12,54 @@ from fontTools.ttLib import TTFont
 from config import svg_filename_to_codepoint
 
 logger = logging.getLogger("png2font-api")
+
+SVG_NS = "http://www.w3.org/2000/svg"
+ET.register_namespace("", SVG_NS)
+
+
+def normalize_color_svg_viewports(svg_folder: Path, ttf_path: str) -> None:
+    """Force every color SVG's outer viewport (width/height and viewBox
+    width) to exactly unitsPerEm, in place. Leaves the artwork's own
+    coordinates untouched — only the declared canvas size changes.
+
+    Per the OpenType 'SVG ' table spec ("Coordinate systems and glyph
+    metrics"): the render viewport for every glyph is *always* the em
+    square (unitsPerEm x unitsPerEm); any viewBox or width/height that
+    differs from unitsPerEm "will have the effect of a scale
+    transformation." Traced SVGs declare width/viewBox as each glyph's own
+    natural (narrower) bounding width, never unitsPerEm — so a strictly
+    spec-compliant renderer scales that up to fill the em square, blowing
+    the glyph up. Safari's renderer is lenient and just uses the declared
+    size directly, which is why this was invisible there.
+
+    Two earlier attempts tried to fix Firefox's *advance/spacing* by
+    rewriting width to match hmtx (with or without padding viewBox to
+    match) — that was solving the wrong problem: per spec, advance always
+    comes from hmtx regardless of what the SVG declares, and it was the
+    viewport/em-square scale mismatch causing visual overlap all along.
+    """
+    font = TTFont(ttf_path)
+    upm = font["head"].unitsPerEm
+
+    for svg_path in sorted(Path(svg_folder).glob("*.svg")):
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+        view_box = root.attrib.get("viewBox")
+        if not view_box:
+            continue
+        x0, y0, w, h = map(float, view_box.split())
+        if (
+            w == upm
+            and h == upm
+            and root.attrib.get("width") == f"{upm:g}"
+            and root.attrib.get("height") == f"{upm:g}"
+        ):
+            continue  # already matches, nothing to do
+
+        root.set("viewBox", f"{x0:g} {y0:g} {upm:g} {upm:g}")
+        root.set("width", f"{upm:g}")
+        root.set("height", f"{upm:g}")
+        tree.write(svg_path, encoding="utf-8", xml_declaration=False)
 
 
 def fix_bitmap_advances(font_path: str) -> None:
@@ -187,17 +236,17 @@ def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
     FFTM (FontForge metadata) always goes.
 
     The web flavors (woff/woff2) additionally drop:
-    - 'SVG ': Firefox sizes color glyphs from each SVG document's own
-      width/height instead of hmtx, running words together.
-    - sbix, CBDT/CBLC (only when COLR is present): browsers all prefer
-      COLRv0 over the bitmaps, and Safari never draws CBDT at all —
-      verified pixel-identical in WebKit — so they're ~40% dead weight.
+    - sbix, CBDT/CBLC (only when COLR is present): Chrome and Firefox both
+      prefer COLR over the bitmaps, so those tables are dead weight there;
+      Safari draws neither COLR nor CBDT/sbix from a web font, but does
+      render 'SVG ' — kept (see align_color_svg_widths for why that no
+      longer breaks Firefox's layout) so Safari still gets color.
 
     The TTF keeps everything: it's installed rather than web-served, and
     CoreText renders it from 'SVG ' (macOS 13+, preferred over sbix —
     verified) or sbix (older macOS); CBDT stays as a harmless fallback.
     """
-    tables = ("FFTM",) if flavor == "ttf" else ("SVG ", "FFTM")
+    tables = ("FFTM",)
     try:
         font = TTFont(font_path)
         for table in tables:

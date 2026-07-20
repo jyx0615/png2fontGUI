@@ -57,11 +57,11 @@ fail_orphaned_jobs()
 @app.post(
     "/api/generate-font",
     status_code=202,
-    summary="Submit a font generation job (PNG glyphs → TTF + WOFF + WOFF2)",
+    summary="Submit a font generation job (PNG glyphs → TTF + WOFF2)",
     description=(
         "Saves the uploaded PNG glyphs, starts generation in the background, and "
         "returns a job_id immediately. Generation can take ~10 minutes: poll "
-        "GET /api/job/{job_id}, then download the ZIP (color TTF + WOFF + WOFF2) from "
+        "GET /api/job/{job_id}, then download the ZIP (color TTF + WOFF2) from "
         "GET /api/job/{job_id}/result."
     ),
     responses={
@@ -173,10 +173,10 @@ def get_job_status(job_id: str):
 
 @app.get(
     "/api/job/{job_id}/result",
-    summary="Download the finished TTF + WOFF + WOFF2 ZIP for a completed job",
+    summary="Download the finished TTF + WOFF2 ZIP for a completed job",
     responses={
         200: {
-            "description": "ZIP archive containing TTF, WOFF and WOFF2 font files",
+            "description": "ZIP archive containing TTF and WOFF2 font files",
             "content": {"application/zip": {"example": "fontname_fonts.zip"}},
         },
         404: {"description": "Unknown or expired job"},

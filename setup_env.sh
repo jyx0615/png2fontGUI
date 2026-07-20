@@ -26,11 +26,6 @@ else
     echo "Warning: nanoemoji directory not found, skipping"
 fi
 
-# Install ttf2woff in the conda environment
-echo "Installing ttf2woff..."
-npm install -g ttf2woff
-
-
 # Install ttf2woff2 in the conda environment
 echo "Installing ttf2woff2..."
 npm install -g ttf2woff2
