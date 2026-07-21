@@ -202,7 +202,6 @@
                 <h3>Download Font Files</h3>
                 <div class="download-buttons">
                     <a href="#" id="download-ttf" class="btn btn-secondary" download><i data-lucide="download"></i> Color-Optimized TTF <span class="file-size" id="size-ttf"></span></a>
-                    <a href="#" id="download-woff" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF Font <span class="file-size" id="size-woff"></span></a>
                     <a href="#" id="download-woff2" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF2 Font <span class="file-size" id="size-woff2"></span></a>
                 </div>
             </div>
@@ -520,7 +519,6 @@
                 const zip = await JSZip.loadAsync(zipBlob);
                 let fontFiles = {
                     ttf: null,
-                    woff: null,
                     woff2: null
                 };
 
@@ -533,8 +531,6 @@
                         fontFiles.ttf = { blob: fileData, url: fileUrl, name: filename };
                     } else if (filename.endsWith('.woff2')) {
                         fontFiles.woff2 = { blob: fileData, url: fileUrl, name: filename };
-                    } else if (filename.endsWith('.woff')) {
-                        fontFiles.woff = { blob: fileData, url: fileUrl, name: filename };
                     }
                 }
 
@@ -544,12 +540,12 @@
                 // Generate unique Font Family name to inject dynamically
                 const customFontName = (fontnameInput.value || 'MyCustomFont') + '_' + Date.now();
 
-                modalStatus.textContent = 'Injecting WOFF font for preview...';
+                modalStatus.textContent = 'Injecting WOFF2 font for preview...';
 
-                // Use WOFF font for preview
-                if (fontFiles.woff) {
-                    // Inject WOFF font dynamically into the web page!
-                    const fontFace = new FontFace(customFontName, `url(${fontFiles.woff.url})`, { format: 'woff' });
+                // Use WOFF2 font for preview
+                if (fontFiles.woff2) {
+                    // Inject WOFF2 font dynamically into the web page!
+                    const fontFace = new FontFace(customFontName, `url(${fontFiles.woff2.url})`, { format: 'woff2' });
                     await fontFace.load();
                     document.fonts.add(fontFace);
 
@@ -559,11 +555,11 @@
                     document.getElementById('preview-font-badge').textContent = fontnameInput.value;
                     testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 !@#$%^&*()`;
                 } else {
-                    console.warn('WOFF font file not available for preview');
+                    console.warn('WOFF2 font file not available for preview');
                 }
 
                 // Update download links with file sizes
-                for (const format of ['ttf', 'woff', 'woff2']) {
+                for (const format of ['ttf', 'woff2']) {
                     const link = document.getElementById(`download-${format}`);
                     const sizeLabel = document.getElementById(`size-${format}`);
                     const font = fontFiles[format];
