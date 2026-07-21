@@ -142,17 +142,19 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
                     continue
                 glyph.glyphName = target_name
                 # originOffsetY is left as nanoemoji sets it (always
-                # -descent, correct as-is). originOffsetX is always 0 —
-                # fine only for a glyph that fills its whole advance box —
-                # so re-center the bitmap on the outline's own bbox
-                # center, matching glyphs narrower than their advance
-                # (e.g. monospace "1").
+                # -descent, correct as-is) — confirms originOffsetX/Y are
+                # used directly, with no glyf-bbox addition on top.
+                # originOffsetX is always 0, i.e. every bitmap's left edge
+                # anchored at x=0 — fine only for a glyph that fills its
+                # whole advance box, wrong for one centered within a wider
+                # advance (e.g. monospace "1"). Set it directly to center
+                # the bitmap on the outline's own bbox center instead.
                 outline = target_glyf[target_name]
                 if outline.numberOfContours != 0 and glyph.imageData:
                     image = Image.open(io.BytesIO(glyph.imageData))
                     bitmap_w_funits = image.width * upm / strike.ppem
-                    outline_w_funits = outline.xMax - outline.xMin
-                    offset_funits = (outline_w_funits - bitmap_w_funits) / 2
+                    outline_center_funits = (outline.xMin + outline.xMax) / 2
+                    offset_funits = outline_center_funits - bitmap_w_funits / 2
                     glyph.originOffsetX = round(offset_funits * strike.ppem / upm)
                 remapped[target_name] = glyph
             strike.glyphs.clear()
