@@ -141,34 +141,19 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
                 if target_name is None:
                     continue
                 glyph.glyphName = target_name
-                # CoreText places sbix bitmaps relative to the glyf bbox
-                # corner, not the glyph origin nanoemoji assumes (Apple's
-                # docs vs. the OpenType spec) — glyphs with different yMin
-                # land at different heights. Subtracting the bbox corner
-                # cancels that out for Y, restoring nanoemoji's own
-                # (vertically sensible) offset. Safe to bake in: CoreText
-                # is the only renderer that reaches sbix.
+                # originOffsetY is left as nanoemoji sets it (always
+                # -descent, correct as-is). originOffsetX is always 0 —
+                # fine only for a glyph that fills its whole advance box —
+                # so re-center the bitmap on the outline's own bbox
+                # center, matching glyphs narrower than their advance
+                # (e.g. monospace "1").
                 outline = target_glyf[target_name]
-                if outline.numberOfContours != 0:
-                    glyph.originOffsetY -= round(outline.yMin * strike.ppem / upm)
-                    # X can't use the same cancellation: doing so anchors
-                    # every bitmap's *left edge* at x=0 regardless of the
-                    # outline's own position, which only looks right for
-                    # glyphs wide enough to fill their whole advance box.
-                    # For monospace glyphs centered within a wider advance
-                    # (e.g. "1"), that leaves the color bitmap sitting far
-                    # to the left of the actual (centered) outline —
-                    # confirmed empirically: originOffsetX always came out
-                    # as exactly -outline.xMin, i.e. bitmap left edge = 0.
-                    # Center the bitmap on the outline's own bbox center
-                    # instead, so it lines up with the outline regardless
-                    # of where that center happens to sit.
-                    if glyph.imageData:
-                        image = Image.open(io.BytesIO(glyph.imageData))
-                        bitmap_w_funits = image.width * upm / strike.ppem
-                        outline_w_funits = outline.xMax - outline.xMin
-                        offset_funits = (outline_w_funits - bitmap_w_funits) / 2
-                        glyph.originOffsetX = round(offset_funits * strike.ppem / upm)
+                if outline.numberOfContours != 0 and glyph.imageData:
+                    image = Image.open(io.BytesIO(glyph.imageData))
+                    bitmap_w_funits = image.width * upm / strike.ppem
+                    outline_w_funits = outline.xMax - outline.xMin
+                    offset_funits = (outline_w_funits - bitmap_w_funits) / 2
+                    glyph.originOffsetX = round(offset_funits * strike.ppem / upm)
                 remapped[target_name] = glyph
             strike.glyphs.clear()
             strike.glyphs.update(remapped)

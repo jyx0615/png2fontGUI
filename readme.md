@@ -44,14 +44,13 @@ CLI arguments override values in `config.toml`. Precedence: CLI > `config.toml`.
 - `app.py` — FastAPI routes (submit job, poll status, download result); the actual work lives in:
   - `pipeline.py` — the per-job generation pipeline (trace → FontForge → color tables → WOFF2 → ZIP).
   - `job_store.py` — disk-backed job status store (status.json per job, TTL sweep, orphan detection).
-  - `font_tables.py` — TTF post-processing (bitmap advances, sbix grafting, table trimming).
+  - `font_tables.py` — TTF post-processing (sbix grafting, table trimming).
 - `png2svg.py` — trace PNGs to normalized SVGs.
   - Default: `python3 png2svg.py`
   - Options: `--png_folder <dir>` and `--svg_output <dir>` (defaults: `glyphs`, `svg_glyphs`).
 - `font.py` — FontForge script that imports SVGs and generates `<fontname>.ttf`.
   - Default: `fontforge -script font.py` (reads naming from `config.toml`).
   - Override font names: `fontforge -script font.py svg_glyphs --fontname MyFont --fullname "My Font" --familyname "My Family"`.
-- `rename.py` — map SVG filenames to AGL glyph names and copy into `renamed_svg_glyphs/`.
 - `run.sh` — end-to-end pipeline wrapper. Usage:
 
 ```bash
@@ -61,13 +60,33 @@ CLI arguments override values in `config.toml`. Precedence: CLI > `config.toml`.
 ./run.sh my_pngs MyType # use folder `my_pngs` and produce `MyType.ttf`
 ```
 
+**Color tables & browser support**
+
+No single OpenType color table is understood by Chrome, Firefox, *and* Safari, so the pipeline ships two and lets each browser pick the one it understands:
+
+| Table    | Chrome | Firefox | Safari | Used for |
+| -------- | ------ | ------- | ------ | -------- |
+| `COLR` (v1) | 98+ | 107+ | ✗ | Web (`.woff2`) |
+| `sbix`   | 66+ | ✗ | 9.1+ | Web (`.woff2`); also the older-macOS fallback in the installed `.ttf` |
+| `SVG `   | ✗ | 31+ | 12.1+ | Installed `.ttf` only (CoreText, macOS 13+) |
+
+- The **web flavor** (`.woff2`) ships `COLR` + `sbix`: together they cover Chrome, Firefox, and Safari with only Chrome carrying a few redundant (and ignored — Chrome prefers `COLR`) `sbix` bytes. `SVG ` is dropped — Firefox already has `COLR`, and Chrome never implemented `SVG ` at all, so keeping it would be pure dead weight.
+- The **installed flavor** (`.ttf`) keeps every table nanoemoji/`add_sbix_table` produce (`COLR`, `SVG `, `sbix`): CoreText prefers `SVG ` on macOS 13+ and falls back to `sbix` on older macOS.
+- `sbix` isn't something nanoemoji's own `maximum_color` CLI exposes (its bitmap flag only builds `CBDT`, which none of the three target browsers need once `sbix` covers Safari) — `add_sbix_table` in `font_tables.py` builds it directly from the same picosvg assets nanoemoji already extracts for `COLR`, positioning each bitmap centered on its outline glyph's own bounding box (nanoemoji's own horizontal placement always left-anchors at x=0, which only looks right for a glyph that fills its whole advance box).
+
 **Pipeline (what each step does)**
 
-- `png2svg.py`: uses VTracer to convert PNG → temporary SVG, wraps artwork in a <g> transform so baseline is at y=0, sets viewBox to `0 -UPM UPM UPM` and writes a fixed `width`/`height` equal to `UPM` so all glyphs share the same canvas.
-- `svgcleaner` is run to normalize and compact the SVGs into `svg_glyphs/`.
-- `rename.py` or `clean.py` can be used to convert filenames to AGL names or canonical `uXXXX.svg` forms and place them into `renamed_svg_glyphs/` for packaging.
-- `font.py` (via `fontforge -script`) imports SVGs, scales and vertically offsets each glyph to fit the em square, sets each glyph's `width` to `advance_width` from `config.toml` (making the font monospace), and writes `<fontname>.ttf`.
-- `addsvg` embeds the SVG outlines back into the produced TTF to create a color-capable font.
+Run by `pipeline.py`'s `run_generation_job`, per job:
+
+1. `png2svg.convert_pngs_to_svgs` — traces each PNG with VTracer into a color SVG (baseline at y=0, ink at negative y).
+2. `png2svg.shift_svgs_for_descent` — shifts every traced SVG down by the font's descent, reserving descender room without needing a re-trace on metric changes.
+3. `png2svg.flatten_svgs_for_outlines` — unions each glyph's color regions into a single monochrome silhouette (parallelized across glyphs — the union itself is the slow part per glyph) for FontForge, which can't handle hundreds of overlapping paths efficiently.
+4. `font.py` (via `fontforge -script`) imports the flattened silhouettes, scales/positions each glyph, sets advance widths, and writes the base `<fontname>.ttf`.
+5. `addsvg` embeds the (still color, natural-aspect-ratio) shifted SVGs into that TTF as an `'SVG '` table.
+6. `nanoemoji`'s `maximum_color` builds a `COLR` (v1) table from that same `'SVG '` table.
+7. `font_tables.add_sbix_table` grafts an `sbix` table, built from the picosvg assets nanoemoji already extracted for step 6 — nanoemoji's own merge tooling can't add `sbix`, so a donor font is built and merged in with `fontTools`.
+8. `font_tables.subset_drop_unused_tables` drops `'SVG '` from the web flavor (see table above) and FontForge's `FFTM` metadata table always.
+9. The color TTF is converted to `.woff2`, then both files are zipped for download.
 
 **Visual proof**
 

@@ -131,14 +131,9 @@ def run_generation_job(
         logger.info("FontForge TTF generation completed successfully.")
 
         # 3. Embed the color SVG documents as an 'SVG ' table (addsvg).
-        # Left at each glyph's natural aspect ratio — nanoemoji reads this
-        # same embedded table below to render sbix strikes via resvg, and
-        # needs the real aspect ratio to size them correctly. Firefox
-        # never reads this table (it gets color from COLR), and Safari's
-        # only remaining consumer of it is CoreText's direct-SVG renderer
-        # (TTF flavor, installed fonts) — that renderer is lenient about
-        # width/height, so the natural aspect ratio already renders fine
-        # there without any further viewport normalization.
+        # nanoemoji reads this same embedded table below to render sbix
+        # strikes via resvg, so it's left at each glyph's natural aspect
+        # ratio rather than normalized to unitsPerEm.
         addsvg_bin = shutil.which("addsvg") or "/opt/miniconda3/envs/genFont/bin/addsvg"
         addsvg_cmd = [addsvg_bin, str(svg_shifted_folder), output_ttf_path]
 
@@ -160,7 +155,7 @@ def run_generation_job(
                 "TTF generation succeeded but the output file could not be found."
             )
 
-        # 4. Add COLR/CBDT color tables with nanoemoji's maximum_color
+        # 4. Add a COLR color table with nanoemoji's maximum_color
         write_job_status(job_id, phase="color-optimize", detail="Embedding color layers (nanoemoji)")
         nanoemoji_dir = Path("nanoemoji")
         output_ttf_color_filename = f"{fontname}_color.ttf"
