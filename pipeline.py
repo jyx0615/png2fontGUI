@@ -16,8 +16,6 @@ from pathlib import Path
 from config import vertical_metrics
 from font_tables import (
     add_sbix_table,
-    normalize_color_svg_viewports,
-    fix_bitmap_advances,
     subset_drop_unused_tables,
 )
 from job_store import HEARTBEAT_SECONDS, job_dir, write_job_status
@@ -132,13 +130,15 @@ def run_generation_job(
 
         logger.info("FontForge TTF generation completed successfully.")
 
-        # 2b. Resize each color SVG's canvas to match its real hmtx advance
-        # (now final) so Firefox's width-based OT-SVG sizing lines up with
-        # the outline glyph instead of the traced canvas's natural aspect.
-        align_color_svg_widths(svg_shifted_folder, output_ttf_path)
-        logger.info("Aligned color SVG widths to font advances.")
-
-        # 3. Embed the color SVG documents as an 'SVG ' table (addsvg)
+        # 3. Embed the color SVG documents as an 'SVG ' table (addsvg).
+        # Left at each glyph's natural aspect ratio — nanoemoji reads this
+        # same embedded table below to render sbix strikes via resvg, and
+        # needs the real aspect ratio to size them correctly. Firefox
+        # never reads this table (it gets color from COLR), and Safari's
+        # only remaining consumer of it is CoreText's direct-SVG renderer
+        # (TTF flavor, installed fonts) — that renderer is lenient about
+        # width/height, so the natural aspect ratio already renders fine
+        # there without any further viewport normalization.
         addsvg_bin = shutil.which("addsvg") or "/opt/miniconda3/envs/genFont/bin/addsvg"
         addsvg_cmd = [addsvg_bin, str(svg_shifted_folder), output_ttf_path]
 
@@ -174,11 +174,10 @@ def run_generation_job(
             logger.warning("nanoemoji directory not found, using original TTF")
             shutil.copy(output_ttf_path, output_ttf_color_path)
 
-        # 5. Post-process the color TTF: rewrite bitmap advances from hmtx
-        # (see fix_bitmap_advances), graft sbix for pre-13 macOS CoreText
-        # (see add_sbix_table; no-op if the nanoemoji assets are missing),
-        # and drop redundant tables (see subset_drop_unused_tables).
-        fix_bitmap_advances(output_ttf_color_path)
+        # 5. Post-process the color TTF: graft sbix for pre-13 macOS
+        # CoreText (see add_sbix_table; no-op if the nanoemoji assets are
+        # missing), and drop redundant tables (see
+        # subset_drop_unused_tables).
         add_sbix_table(output_ttf_color_path, Path(temp_dir) / "build", output_ttf_path)
         subset_drop_unused_tables(output_ttf_color_path, flavor="ttf")
 
@@ -231,10 +230,15 @@ def run_maximum_color(
     otherwise clobber each other's Font.ttf). Output is streamed line by
     line — this phase can run 20+ minutes — and kept in full at
     <job>/nanoemoji.log.
+
+    No --bitmaps: that would build CBDT/CBLC too, which we never ship (see
+    subset_drop_unused_tables) and don't need — add_sbix_table builds sbix
+    directly from the same picosvg assets this COLR build already
+    produces, without requiring a separate CBDT build first.
     """
+    maximum_color_bin = shutil.which("maximum_color") or "/opt/miniconda3/envs/genFontAPI/bin/maximum_color"
     maximum_color_cmd = [
-        "maximum_color",
-        "--bitmaps",
+        maximum_color_bin,
         str(output_ttf_path),
     ]
     mc_log_path = Path(temp_dir) / "nanoemoji.log"

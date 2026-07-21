@@ -1,9 +1,11 @@
 import argparse
+import multiprocessing
 import os
 import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -239,50 +241,72 @@ def shift_svgs_for_descent(
         tree.write(out_directory / svg_path.name, encoding="utf-8", xml_declaration=False)
 
 
+def _flatten_one_svg_for_outline(svg_path: Path, out_path: Path) -> None:
+    """Union one SVG's color regions into a single silhouette path.
+
+    Split out from flatten_svgs_for_outlines so it can run in a worker
+    process — each glyph's union is completely independent of the others.
+    """
+    # Drop the seam-cover strokes: invisible in a monochrome silhouette,
+    # but picosvg would convert each into an extra fill shape, doubling
+    # the union work.
+    tree = ET.parse(svg_path)
+    for el in tree.iter():
+        for attr in ("stroke", "stroke-width", "stroke-linejoin"):
+            el.attrib.pop(attr, None)
+    pico = SVG.fromstring(ET.tostring(tree.getroot(), encoding="unicode")).topicosvg()
+    shapes = list(pico.shapes())
+    vb = pico.view_box()
+
+    if shapes:
+        merged = SVGPath.from_commands(
+            svg_pathops.union(
+                [s.as_cmd_seq() for s in shapes],
+                [getattr(s, "fill_rule", "nonzero") or "nonzero" for s in shapes],
+            )
+        )
+        path_markup = f'<path d="{merged.d}" fill="black"/>'
+    else:
+        # Empty glyph (e.g. space) — keep the viewBox so advance width stays intact.
+        path_markup = ""
+
+    out_markup = (
+        f'<svg xmlns="{SVG_NS}" '
+        f'viewBox="{vb.x:g} {vb.y:g} {vb.w:g} {vb.h:g}" '
+        f'width="{vb.w:g}" height="{vb.h:g}">'
+        f"{path_markup}</svg>"
+    )
+    out_path.write_text(out_markup, encoding="utf-8")
+
+
 def flatten_svgs_for_outlines(svg_folder: Path | str, out_folder: Path | str) -> None:
     """Union each SVG's color regions into one silhouette path for FontForge.
 
     FontForge only needs the monochrome 'glyf' outline from these SVGs (color
     comes from the 'SVG '/sbix tables), and its removeOverlap() takes minutes
     per glyph on hundreds of overlapping paths. Pre-unioning with skia-pathops
-    takes seconds.
+    takes seconds per glyph — but seconds x hundreds of glyphs adds up, and
+    each glyph's union is independent, so glyphs are flattened in parallel
+    worker processes rather than one at a time.
     """
 
     src_directory = Path(svg_folder)
     out_directory = Path(out_folder)
     out_directory.mkdir(parents=True, exist_ok=True)
 
-    for svg_path in sorted(src_directory.glob("*.svg")):
-        # Drop the seam-cover strokes: invisible in a monochrome silhouette,
-        # but picosvg would convert each into an extra fill shape, doubling
-        # the union work.
-        tree = ET.parse(svg_path)
-        for el in tree.iter():
-            for attr in ("stroke", "stroke-width", "stroke-linejoin"):
-                el.attrib.pop(attr, None)
-        pico = SVG.fromstring(ET.tostring(tree.getroot(), encoding="unicode")).topicosvg()
-        shapes = list(pico.shapes())
-        vb = pico.view_box()
-
-        if shapes:
-            merged = SVGPath.from_commands(
-                svg_pathops.union(
-                    [s.as_cmd_seq() for s in shapes],
-                    [getattr(s, "fill_rule", "nonzero") or "nonzero" for s in shapes],
-                )
-            )
-            path_markup = f'<path d="{merged.d}" fill="black"/>'
-        else:
-            # Empty glyph (e.g. space) — keep the viewBox so advance width stays intact.
-            path_markup = ""
-
-        out_markup = (
-            f'<svg xmlns="{SVG_NS}" '
-            f'viewBox="{vb.x:g} {vb.y:g} {vb.w:g} {vb.h:g}" '
-            f'width="{vb.w:g}" height="{vb.h:g}">'
-            f"{path_markup}</svg>"
-        )
-        (out_directory / svg_path.name).write_text(out_markup, encoding="utf-8")
+    svg_paths = sorted(src_directory.glob("*.svg"))
+    # fork, not the platform default (spawn on macOS): spawn re-imports the
+    # __main__ module in each worker, which crashes here since this runs
+    # from inside a FastAPI background thread with no __main__ guard. fork
+    # just duplicates the current process, so it needs no such guard.
+    fork_ctx = multiprocessing.get_context("fork")
+    with ProcessPoolExecutor(mp_context=fork_ctx) as executor:
+        futures = [
+            executor.submit(_flatten_one_svg_for_outline, svg_path, out_directory / svg_path.name)
+            for svg_path in svg_paths
+        ]
+        for future in futures:
+            future.result()
 
 
 def main() -> None:

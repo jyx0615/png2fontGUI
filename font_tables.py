@@ -1,137 +1,65 @@
 """Post-processing of the built TTF: bitmap metrics, sbix grafting, table trimming."""
 
-import logging
-import shutil
-import subprocess
-import sys
-import xml.etree.ElementTree as ET
+import io, logging, shutil, subprocess, sys
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
+from PIL import Image
 
 from config import svg_filename_to_codepoint
 
 logger = logging.getLogger("png2font-api")
 
-SVG_NS = "http://www.w3.org/2000/svg"
-ET.register_namespace("", SVG_NS)
-
-
-def normalize_color_svg_viewports(svg_folder: Path, ttf_path: str) -> None:
-    """Force every color SVG's outer viewport (width/height and viewBox
-    width) to exactly unitsPerEm, in place. Leaves the artwork's own
-    coordinates untouched — only the declared canvas size changes.
-
-    Per the OpenType 'SVG ' table spec ("Coordinate systems and glyph
-    metrics"): the render viewport for every glyph is *always* the em
-    square (unitsPerEm x unitsPerEm); any viewBox or width/height that
-    differs from unitsPerEm "will have the effect of a scale
-    transformation." Traced SVGs declare width/viewBox as each glyph's own
-    natural (narrower) bounding width, never unitsPerEm — so a strictly
-    spec-compliant renderer scales that up to fill the em square, blowing
-    the glyph up. Safari's renderer is lenient and just uses the declared
-    size directly, which is why this was invisible there.
-
-    Two earlier attempts tried to fix Firefox's *advance/spacing* by
-    rewriting width to match hmtx (with or without padding viewBox to
-    match) — that was solving the wrong problem: per spec, advance always
-    comes from hmtx regardless of what the SVG declares, and it was the
-    viewport/em-square scale mismatch causing visual overlap all along.
-    """
-    font = TTFont(ttf_path)
-    upm = font["head"].unitsPerEm
-
-    for svg_path in sorted(Path(svg_folder).glob("*.svg")):
-        tree = ET.parse(svg_path)
-        root = tree.getroot()
-        view_box = root.attrib.get("viewBox")
-        if not view_box:
-            continue
-        x0, y0, w, h = map(float, view_box.split())
-        if (
-            w == upm
-            and h == upm
-            and root.attrib.get("width") == f"{upm:g}"
-            and root.attrib.get("height") == f"{upm:g}"
-        ):
-            continue  # already matches, nothing to do
-
-        root.set("viewBox", f"{x0:g} {y0:g} {upm:g} {upm:g}")
-        root.set("width", f"{upm:g}")
-        root.set("height", f"{upm:g}")
-        tree.write(svg_path, encoding="utf-8", xml_declaration=False)
-
-
-def fix_bitmap_advances(font_path: str) -> None:
-    """Copy hmtx advances into the CBDT bitmap glyph metrics.
-
-    nanoemoji sets each bitmap's advance to its image width (emoji-style),
-    and Chrome lays out CBDT glyphs with those advances instead of hmtx —
-    silently breaking word and letter spacing.
-    """
-    font = TTFont(font_path)
-    if "CBDT" not in font or "CBLC" not in font:
-        return
-    upm = font["head"].unitsPerEm
-    hmtx = font["hmtx"]
-    cblc = font["CBLC"]
-    for strike_index, strike in enumerate(font["CBDT"].strikeData):
-        ppem = cblc.strikes[strike_index].bitmapSizeTable.ppemX
-        for glyph_name, rec in strike.items():
-            advance, lsb = hmtx[glyph_name]
-            rec.decompile()
-            # SmallGlyphMetrics fields are uint8/int8 — clamp to be safe.
-            rec.metrics.Advance = min(255, max(0, round(advance * ppem / upm)))
-            rec.metrics.BearingX = min(127, max(-128, round(lsb * ppem / upm)))
-    font.save(font_path)
-
 
 # sbix strike height in pixels. CoreText upscales sbix to the text size, so
-# the strike must stay sharp at display sizes. CBDT can't match it: its uint8
-# metrics cap a strike at 255px, so CBDT keeps nanoemoji's 128px default.
+# the strike must stay sharp at display sizes.
 SBIX_STRIKE_RESOLUTION = 512
 
 
-def write_sbix_glyphmap(build_dir: Path, cbdt_glyphmap: Path, sbix_glyphmap: Path) -> int | None:
-    """Write SBIX.glyphmap, re-rendering the strike at SBIX_STRIKE_RESOLUTION.
+def write_sbix_glyphmap(build_dir: Path, source_glyphmap: Path, sbix_glyphmap: Path) -> int | None:
+    """Write SBIX.glyphmap, rendering each glyph's picosvg at
+    SBIX_STRIKE_RESOLUTION via resvg.
 
-    Re-renders the same picosvgs behind the 128px CBDT bitmaps with resvg,
-    giving CoreText a strike that stays sharp at display sizes. Falls back to
-    reusing the CBDT bitmaps if resvg is missing or a render fails. Returns
-    the rendered strike height, or None when falling back.
+    source_glyphmap is nanoemoji's own COLR glyphmap (COLR_1.glyphmap) —
+    its rows already list every color glyph's picosvg path; we don't need
+    a separate CBDT/bitmap build just to learn that mapping. Falls back to
+    leaving rows without a bitmap column if resvg is missing or a render
+    fails (nanoemoji.write_font then renders nothing for that glyph — this
+    only ever means a best-effort sbix, never a hard failure). Returns the
+    rendered strike height, or None if resvg isn't available at all.
     """
     # resvg comes from the resvg-cli pip package, installed alongside the
     # interpreter — fall back there when the env isn't on PATH.
     resvg_bin = shutil.which("resvg") or str(Path(sys.executable).parent / "resvg")
     if not Path(resvg_bin).exists():
-        logger.warning("sbix: resvg not found, reusing CBDT strike bitmaps")
-        shutil.copy(cbdt_glyphmap, sbix_glyphmap)
+        logger.warning("sbix: resvg not found, skipping strike rendering")
+        shutil.copy(source_glyphmap, sbix_glyphmap)
         return None
 
     bitmap_dir = build_dir / "sbix_bitmap"
     bitmap_dir.mkdir(exist_ok=True)
     rows = []
-    for line in cbdt_glyphmap.read_text().splitlines():
+    for line in source_glyphmap.read_text().splitlines():
         if not line.strip():
             continue
         columns = line.split(",")
-        svg_rel, bitmap_rel = columns[0], columns[1]
-        if not svg_rel or not bitmap_rel:
+        svg_rel = columns[0]
+        if not svg_rel:
             # Bitmap-less row (e.g. the blank space glyph) — keep as-is.
             rows.append(line)
             continue
-        out_png = bitmap_dir / Path(bitmap_rel).name
+        out_png = bitmap_dir / f"{Path(svg_rel).stem}.png"
         render = subprocess.run(
             [resvg_bin, "-h", str(SBIX_STRIKE_RESOLUTION), str(build_dir / svg_rel), str(out_png)],
             capture_output=True, text=True, check=False,
         )
         if render.returncode != 0 or not out_png.exists():
             logger.warning(
-                "sbix: resvg failed on %s (%s), reusing CBDT strike bitmaps",
+                "sbix: resvg failed on %s (%s), leaving glyph without a strike",
                 svg_rel, (render.stderr or "").strip(),
             )
-            shutil.copy(cbdt_glyphmap, sbix_glyphmap)
-            return None
+            rows.append(line)
+            continue
         columns[1] = f"sbix_bitmap/{out_png.name}"
         rows.append(",".join(columns))
     sbix_glyphmap.write_text("\n".join(rows) + "\n")
@@ -139,8 +67,8 @@ def write_sbix_glyphmap(build_dir: Path, cbdt_glyphmap: Path, sbix_glyphmap: Pat
 
 
 def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> None:
-    """Graft an sbix color table onto font_path, built from the picosvg
-    assets maximum_color already extracted for CBDT.
+    """Graft an sbix color table onto font_path, built from the same
+    picosvg assets maximum_color already extracted to generate COLR.
 
     Pre-13 macOS CoreText (Font Book, Preview, ...) draws color glyphs only
     from sbix, which nanoemoji deliberately never generates — without this
@@ -151,10 +79,14 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
 
     Best-effort: any failure just leaves the font without sbix.
     """
-    cbdt_glyphmap = build_dir / "CBDT.glyphmap"
+    # COLR_1.glyphmap: nanoemoji's own glyphmap from building glyf_colr_1
+    # (see maximum_color.py's WriteFontInputs.for_tag) — reused here rather
+    # than running a separate --bitmaps/CBDT build just to get the same
+    # svg-path-per-glyph mapping.
+    colr_glyphmap = build_dir / "COLR_1.glyphmap"
     parts_file = build_dir / "parts-merged.json"
-    if not cbdt_glyphmap.exists() or not parts_file.exists():
-        logger.warning("sbix: missing %s or %s, skipping", cbdt_glyphmap, parts_file)
+    if not colr_glyphmap.exists() or not parts_file.exists():
+        logger.warning("sbix: missing %s or %s, skipping", colr_glyphmap, parts_file)
         return
 
     sbix_toml = build_dir / "SBIX.toml"
@@ -162,7 +94,7 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
     sbix_donor_path = build_dir / "MergeSource.sbix.ttf"
 
     try:
-        strike_res = write_sbix_glyphmap(build_dir, cbdt_glyphmap, sbix_glyphmap)
+        strike_res = write_sbix_glyphmap(build_dir, colr_glyphmap, sbix_glyphmap)
 
         config_cmd = [
             "python3", "-m", "nanoemoji.write_config_for_mergeable",
@@ -212,13 +144,31 @@ def add_sbix_table(font_path: str, build_dir: Path, source_ttf_path: str) -> Non
                 # CoreText places sbix bitmaps relative to the glyf bbox
                 # corner, not the glyph origin nanoemoji assumes (Apple's
                 # docs vs. the OpenType spec) — glyphs with different yMin
-                # land at different heights. Subtract the bbox corner (in
-                # strike pixels) to compensate. Safe to bake in: CoreText is
-                # the only renderer that reaches sbix.
+                # land at different heights. Subtracting the bbox corner
+                # cancels that out for Y, restoring nanoemoji's own
+                # (vertically sensible) offset. Safe to bake in: CoreText
+                # is the only renderer that reaches sbix.
                 outline = target_glyf[target_name]
                 if outline.numberOfContours != 0:
-                    glyph.originOffsetX -= round(outline.xMin * strike.ppem / upm)
                     glyph.originOffsetY -= round(outline.yMin * strike.ppem / upm)
+                    # X can't use the same cancellation: doing so anchors
+                    # every bitmap's *left edge* at x=0 regardless of the
+                    # outline's own position, which only looks right for
+                    # glyphs wide enough to fill their whole advance box.
+                    # For monospace glyphs centered within a wider advance
+                    # (e.g. "1"), that leaves the color bitmap sitting far
+                    # to the left of the actual (centered) outline —
+                    # confirmed empirically: originOffsetX always came out
+                    # as exactly -outline.xMin, i.e. bitmap left edge = 0.
+                    # Center the bitmap on the outline's own bbox center
+                    # instead, so it lines up with the outline regardless
+                    # of where that center happens to sit.
+                    if glyph.imageData:
+                        image = Image.open(io.BytesIO(glyph.imageData))
+                        bitmap_w_funits = image.width * upm / strike.ppem
+                        outline_w_funits = outline.xMax - outline.xMin
+                        offset_funits = (outline_w_funits - bitmap_w_funits) / 2
+                        glyph.originOffsetX = round(offset_funits * strike.ppem / upm)
                 remapped[target_name] = glyph
             strike.glyphs.clear()
             strike.glyphs.update(remapped)
@@ -236,15 +186,19 @@ def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
     FFTM (FontForge metadata) always goes.
 
     The web flavors (woff/woff2) additionally drop:
-    - sbix, CBDT/CBLC (only when COLR is present): Chrome and Firefox both
-      prefer COLR over the bitmaps, so those tables are dead weight there;
-      Safari draws neither COLR nor CBDT/sbix from a web font, but does
-      render 'SVG ' — kept (see align_color_svg_widths for why that no
-      longer breaks Firefox's layout) so Safari still gets color.
+    - 'SVG ' (only when COLR is present): per caniuse's actual @font-face
+      support matrix, no single color table covers Chrome + Firefox +
+      Safari — COLR (v1) covers Chrome 98+/Firefox 107+ but not Safari;
+      'SVG ' covers Firefox 31+/Safari 12.1+ but not Chrome (never
+      implemented); sbix covers Chrome 66+/Safari 9.1+ but not Firefox.
+      COLR + sbix covers all three with only Chrome getting redundant
+      bytes (small — Chrome prefers COLR and ignores sbix), whereas
+      COLR + 'SVG ' would leave Firefox parsing a table it doesn't
+      actually need, since it already has COLR.
 
     The TTF keeps everything: it's installed rather than web-served, and
     CoreText renders it from 'SVG ' (macOS 13+, preferred over sbix —
-    verified) or sbix (older macOS); CBDT stays as a harmless fallback.
+    verified) or sbix (older macOS).
     """
     tables = ("FFTM",)
     try:
@@ -252,10 +206,8 @@ def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
         for table in tables:
             if table in font:
                 del font[table]
-        if flavor != "ttf" and "COLR" in font:
-            for table in ("sbix", "CBDT", "CBLC"):
-                if table in font:
-                    del font[table]
+        if flavor != "ttf" and "COLR" in font and "SVG " in font:
+            del font["SVG "]
         font.save(font_path)
     except Exception as exc:
         logger.warning(f"Failed to drop unused tables for {font_path}: {exc}")
