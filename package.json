@@ -1,5 +1,22 @@
 {
+  "name": "png2font-api",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers proxy for png2font font generation service. Forwards HTTP requests to a containerized FastAPI server with automatic retry logic for container startup failures.",
+  "type": "module",
+  "scripts": {
+  },
   "dependencies": {
     "@cloudflare/sandbox": "^0.10.3"
-  }
+  },
+  "devDependencies": {
+  },
+  "keywords": [
+    "font-generation",
+    "png-to-font",
+    "ttf",
+    "svg",
+    "webfont"
+  ],
+  "author": "png2font contributors",
+  "license": "Apache-2.0"
 }
