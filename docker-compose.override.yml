@@ -1,5 +1,0 @@
-services:
-  png2font_api:
-    volumes:
-      - .:/app
-    command: uvicorn app:app --host 0.0.0.0 --port 3000 --reload
