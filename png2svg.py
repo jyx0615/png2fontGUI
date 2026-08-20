@@ -313,21 +313,88 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert PNG glyphs to normalized SVGs."
     )
-    parser.add_argument(
-        "--png_folder",
+    subparsers = parser.add_subparsers(dest="command", help="Sub-command to execute")
+
+    # Trace subcommand: convert PNGs to SVGs
+    trace_parser = subparsers.add_parser("trace", help="Trace PNG glyphs to SVG outlines")
+    trace_parser.add_argument(
+        "--png-folder",
         dest="png_folder",
-        default="glyphs",
-        help="Input folder containing PNG glyphs (default: glyphs)",
+        required=True,
+        help="Input folder containing PNG glyphs",
     )
-    parser.add_argument(
-        "--svg_output",
+    trace_parser.add_argument(
+        "--svg-output",
         dest="svg_output",
-        default="svg_glyphs",
-        help="Output folder for generated SVGs (default: svg_glyphs)",
+        required=True,
+        help="Output folder for generated SVGs",
     )
+    trace_parser.add_argument(
+        "--target-upm",
+        dest="target_upm",
+        type=int,
+        default=UPM,
+        help=f"Target UPM (default: {UPM})",
+    )
+
+    # Shift subcommand: shift SVGs for descent
+    shift_parser = subparsers.add_parser("shift", help="Apply vertical metrics to SVGs")
+    shift_parser.add_argument(
+        "--svg-folder",
+        dest="svg_folder",
+        required=True,
+        help="Input folder containing SVGs",
+    )
+    shift_parser.add_argument(
+        "--out-folder",
+        dest="out_folder",
+        required=True,
+        help="Output folder for shifted SVGs",
+    )
+    shift_parser.add_argument(
+        "--target-upm",
+        dest="target_upm",
+        type=int,
+        required=True,
+        help="Target UPM",
+    )
+    shift_parser.add_argument(
+        "--descent",
+        dest="descent",
+        type=int,
+        required=True,
+        help="Descent offset in units",
+    )
+
+    # Flatten subcommand: flatten SVGs for FontForge
+    flatten_parser = subparsers.add_parser("flatten", help="Flatten SVGs to silhouettes")
+    flatten_parser.add_argument(
+        "--svg-folder",
+        dest="svg_folder",
+        required=True,
+        help="Input folder containing SVGs",
+    )
+    flatten_parser.add_argument(
+        "--out-folder",
+        dest="out_folder",
+        required=True,
+        help="Output folder for flattened SVGs",
+    )
+
     args = parser.parse_args()
 
-    convert_pngs_to_svgs(args.png_folder, args.svg_output)
+    try:
+        if args.command == "trace":
+            convert_pngs_to_svgs(args.png_folder, args.svg_output, args.target_upm)
+        elif args.command == "shift":
+            shift_svgs_for_descent(args.svg_folder, args.out_folder, args.target_upm, args.descent)
+        elif args.command == "flatten":
+            flatten_svgs_for_outlines(args.svg_folder, args.out_folder)
+        else:
+            parser.print_help()
+    except Exception as e:
+        print(f"ERROR: {e}", file=__import__("sys").stderr)
+        __import__("sys").exit(1)
 
 
 if __name__ == "__main__":
