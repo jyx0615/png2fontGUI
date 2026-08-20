@@ -198,3 +198,62 @@ def subset_drop_unused_tables(font_path: str, flavor: str) -> None:
         font.save(font_path)
     except Exception as exc:
         logger.warning(f"Failed to drop unused tables for {font_path}: {exc}")
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Font table operations: sbix grafting and table dropping."
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Sub-command to execute")
+
+    # add-sbix subcommand
+    add_sbix_parser = subparsers.add_parser("add-sbix", help="Add sbix table to font")
+    add_sbix_parser.add_argument(
+        "--font-path",
+        dest="font_path",
+        required=True,
+        help="Path to the font file to add sbix table to",
+    )
+    add_sbix_parser.add_argument(
+        "--build-dir",
+        dest="build_dir",
+        required=True,
+        help="Path to build directory (contains sbix metadata)",
+    )
+    add_sbix_parser.add_argument(
+        "--source-ttf-path",
+        dest="source_ttf_path",
+        required=True,
+        help="Path to source TTF with SVG outlines",
+    )
+
+    # drop-tables subcommand
+    drop_tables_parser = subparsers.add_parser("drop-tables", help="Drop unused tables")
+    drop_tables_parser.add_argument(
+        "--font-path",
+        dest="font_path",
+        required=True,
+        help="Path to the font file",
+    )
+    drop_tables_parser.add_argument(
+        "--flavor",
+        dest="flavor",
+        required=True,
+        choices=["ttf", "woff2"],
+        help="Font flavor (ttf or woff2)",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "add-sbix":
+        add_sbix_table(args.font_path, Path(args.build_dir), args.source_ttf_path)
+    elif args.command == "drop-tables":
+        subset_drop_unused_tables(args.font_path, args.flavor)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
