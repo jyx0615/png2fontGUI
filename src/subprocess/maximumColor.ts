@@ -1,5 +1,7 @@
 /**
- * nanoemoji maximum_color CLI wrapper — generates COLR v1 color table.
+ * nanoemoji maximum_color CLI wrapper — generates a COLR v0 color table.
+ * COLR v0 is broadly supported (including Safari 12.1+), so no bitmap
+ * (CBDT/sbix) fallback table is needed for cross-browser color rendering.
  * Streams output line-by-line for job status updates (nanoemoji can run 20+ min).
  */
 
@@ -22,7 +24,7 @@ export async function runMaximumColor(
 
   const result = await runProcessStreaming(
     MAXIMUM_COLOR_BIN,
-    [ttfPath],
+    ["--colr_version=0", ttfPath],
     (line) => {
       if (line.trim()) {
         lines.push(line);

@@ -1,6 +1,6 @@
 /**
  * Font generation pipeline orchestrator — ported from Python pipeline.py
- * Runs the 10-step pipeline with status updates and heartbeat.
+ * Runs the 9-step pipeline with status updates and heartbeat.
  */
 
 import { copyFileSync, mkdirSync, existsSync, createWriteStream } from "fs";
@@ -20,7 +20,7 @@ import { runFontForge } from "./subprocess/fontforge.js";
 import { runAddsvg } from "./subprocess/addsvg.js";
 import { runMaximumColor } from "./subprocess/maximumColor.js";
 import { runTtf2Woff2 } from "./subprocess/ttf2woff2.js";
-import { runAddSbixTable, runDropUnusedTables } from "./subprocess/fontTablesCli.js";
+import { runDropUnusedTables } from "./subprocess/fontTablesCli.js";
 import { runPng2SvgTrace, runPng2SvgShift, runPng2SvgFlatten } from "./subprocess/png2svgCli.js";
 
 /**
@@ -33,7 +33,6 @@ export async function runGenerationJob(jobId: string, params: GenerateFontParams
   const svgFolder = join(tempDir, "svg_glyphs");
   const svgShiftedFolder = join(tempDir, "svg_glyphs_shifted");
   const svgOutlineFolder = join(tempDir, "svg_glyphs_outline");
-  const buildDir = join(tempDir, "build");
 
   mkdirSync(svgFolder, { recursive: true });
 
@@ -112,19 +111,13 @@ export async function runGenerationJob(jobId: string, params: GenerateFontParams
       copyFileSync(colorResult.outputPath, outputTtfColor);
     }
 
-    // Step 7: Add sbix table (non-fatal)
-    result = await runAddSbixTable(outputTtfColor, buildDir, outputTtf);
-    if (result.code !== 0) {
-      console.warn(`[job ${jobId}] add-sbix failed (non-fatal): ${result.stderr || result.stdout}`);
-    }
-
-    // Step 8: Drop unused tables for TTF flavor
+    // Step 7: Drop unused tables for TTF flavor
     result = await runDropUnusedTables(outputTtfColor, "ttf");
     if (result.code !== 0) {
       console.warn(`[job ${jobId}] drop-tables for TTF failed (non-fatal): ${result.stderr || result.stdout}`);
     }
 
-    // Step 9: Convert to WOFF2
+    // Step 8: Convert to WOFF2
     updateStatus(jobId, "woff", "Converting TTF to WOFF2");
     const outputWoff2 = join(tempDir, `${params.fontname}.woff2`);
     result = await runTtf2Woff2(outputTtfColor, outputWoff2);
@@ -139,7 +132,7 @@ export async function runGenerationJob(jobId: string, params: GenerateFontParams
       }
     }
 
-    // Step 10: Create ZIP file with TTF and WOFF2
+    // Step 9: Create ZIP file with TTF and WOFF2
     updateStatus(jobId, "zipping", "Packaging TTF + WOFF2");
     const zipFilename = `${params.fontname}_fonts.zip`;
     const zipPath = join(tempDir, zipFilename);
@@ -148,7 +141,7 @@ export async function runGenerationJob(jobId: string, params: GenerateFontParams
       { file: outputWoff2, name: `${params.fontname}.woff2` },
     ]);
 
-    // Step 11: Mark as completed
+    // Step 10: Mark as completed
     updateStatus(jobId, "done", "", zipFilename);
     console.log(`[job ${jobId}] completed successfully (zip=${zipFilename})`);
   } catch (error) {
