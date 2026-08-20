@@ -1,40 +1,45 @@
-# Production Dockerfile for deploying png2font API to a public cloud (Railway, Render, Fly.io)
-FROM python:3.11-slim
+# Build stage
+FROM node:18-alpine AS builder
 
-# Prevent Python from writing pyc files and buffering stdout/stderr
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Install native FontForge and system utilities
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    fontforge \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set standard working directory
 WORKDIR /app
 
-# Copy dependency configs
-COPY requirements.txt /app/
+# Copy package files
+COPY package.json package-lock.json ./
 
-# Install FastAPI, Uvicorn, and core pipeline packages
-RUN pip install --no-cache-dir \
-    -r requirements.txt \
-    fastapi \
-    uvicorn \
-    python-multipart \
-    requests
+# Install dependencies
+RUN npm ci
 
-# Copy remaining source code and asset files
-COPY . /app/
+# Copy source code
+COPY tsconfig.json ./
+COPY src ./src
 
-# Download the Linux x86_64 svgcleaner binary (replaces the macOS binary copied above)
-RUN curl -sL https://github.com/RazrFalcon/svgcleaner/releases/download/v0.9.5/svgcleaner_linux_x86_64_0.9.5.tar.gz \
-    | tar -xz -C /usr/local/bin/ svgcleaner && chmod +x /usr/local/bin/svgcleaner
+# Build TypeScript
+RUN npm run build
 
-# Expose default API server port
-EXPOSE 3000
+# Runtime stage
+FROM node:18-alpine
 
-# Start Uvicorn engine
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "3000"]
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json ./
+
+# Install production dependencies only
+RUN npm ci --only=production
+
+# Copy built application from builder
+COPY --from=builder /app/dist ./dist
+
+# Set environment
+ENV NODE_ENV=production
+ENV PORT=8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Start the server
+CMD ["npm", "start"]
