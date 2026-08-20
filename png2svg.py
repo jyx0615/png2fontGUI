@@ -115,8 +115,8 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             colormode="color",
             hierarchical="cutout",      # exact region edges; seams covered by strokes below
             mode="spline",              # smooth Bézier curves
-            filter_speckle=1,           # keep tiny detail regions (fur/texture)
-            color_precision=8,          # many color clusters → rich gradients
+            filter_speckle=2,           # drop sub-pixel specks from the blurred edge gradient
+            color_precision=8,          # enough clusters for shading, without banding the blur into stair-steps
             corner_threshold=60,
             length_threshold=3.0,
             splice_threshold=45,
