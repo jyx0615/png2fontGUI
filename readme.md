@@ -2,7 +2,7 @@
 
 ## Overview
 
-**png2font** converts bitmap glyph PNGs into monospace TTF (TrueType Font) files with color support. It traces PNG images to SVG, normalizes them, flattens them for outline generation, and embeds both SVG and color table data (COLR, sbix, SVG) into the final font for maximum browser and OS compatibility.
+**png2font** converts bitmap glyph PNGs into monospace TTF (TrueType Font) files with color support. It traces PNG images to SVG, normalizes them, flattens them for outline generation, and embeds both SVG and COLR (v0) color table data into the final font for maximum browser and OS compatibility.
 
 The service is a **TypeScript/Node.js HTTP API** that orchestrates job management and the multi-step generation pipeline, delegating font engineering to proven external tools (FontForge, nanoemoji, fontTools) as subprocesses. See [CLAUDE.md](CLAUDE.md) for the full architecture writeup.
 
@@ -139,11 +139,11 @@ src/
     ├── maximumColor.ts                    # nanoemoji maximum_color (streamed progress)
     ├── ttf2woff2.ts                         # TTF -> WOFF2 pipe
     ├── png2svgCli.ts                         # python/png2svg.py {trace,shift,flatten}
-    └── fontTablesCli.ts                       # python/font_tables.py {add-sbix,drop-tables}
+    └── fontTablesCli.ts                       # python/font_tables.py drop-tables
 
 # Python scripts invoked as subprocesses from TypeScript:
 python/png2svg.py       # Argparse subcommands: trace, shift, flatten
-python/font_tables.py    # Argparse subcommands: add-sbix, drop-tables
+python/font_tables.py    # Argparse subcommand: drop-tables
 python/font.py            # FontForge script (unchanged, invoked by fontforge.ts)
 python/config.py            # Shared config utilities (imported by the Python scripts)
 ```
@@ -191,64 +191,49 @@ Embeds the color SVGs (still at original aspect ratio, not flattened) into the T
 
 ### Step 6: Generate COLR Table
 ```
-nanoemoji maximum_color [ttf]
+nanoemoji maximum_color --colr_version=0 [ttf]
 ```
-Generates a `COLR` (v1) table from the `'SVG '` table that was embedded in step 5. Falls back to the non-color TTF if it fails.
+Generates a `COLR`/`CPAL` (v0) table from the `'SVG '` table that was embedded in step 5. COLR v0 is broadly supported (including Safari 12.1+), so no bitmap (`sbix`) fallback table is needed. Falls back to the non-color TTF if it fails.
 
-### Step 7: Add sbix Table
-```
-python3 python/font_tables.py add-sbix
-```
-Custom script that grafts an `sbix` table (built from nanoemoji's extracted picosvg assets). Nanoemoji's own tools can't add sbix, so a donor font is built and merged in using fontTools. Non-fatal.
-
-### Step 8: Remove Unused Tables
+### Step 7: Remove Unused Tables
 ```
 python3 python/font_tables.py drop-tables
 ```
 For web distribution, removes:
-- `'SVG '` table (Firefox uses `COLR`, Chrome never supported `SVG`)
+- `'SVG '` table when `COLR` is present (Chrome/Firefox use `COLR`; Chrome never supported `SVG`)
+- Any stray `sbix` table (never intentionally produced, dropped defensively)
 - FontForge's `FFTM` metadata table (always)
 
-### Step 9: Package & Export
+### Step 8: Package & Export
 - Convert TTF → WOFF2 (web format) via `ttf2woff2`
 - Zip both `.ttf` and `.woff2` files for download
 
 ## Color Support & Browser Compatibility
 
-### The Multi-Table Strategy
-
-Since no single OpenType color table is universally supported across all browsers, the pipeline generates multiple color tables and includes them in both web and installed fonts. Each browser uses the one it understands best.
-
 ### Color Table Support Matrix
 
 | Table | Chrome | Firefox | Safari | Best Used For |
 |-------|--------|---------|--------|---------------|
-| **COLR v1** | 98+ | 107+ | ✗ | Web fonts (`.woff2`) |
-| **sbix** | 66+ | ✗ | 9.1+ | Web & installed fallback |
+| **COLR v0** | 32+ | 26+ | 12.1+ | Web fonts (`.woff2`) & installed fonts |
 | **SVG** | ✗ | 31+ | 12.1+ | Installed fonts (macOS 13+) |
 
 ### Web Flavor (`.woff2`)
 
-Includes: `COLR` + `sbix`
+Includes: `COLR` (v0) + `CPAL` only.
 
-This combination provides universal coverage:
-- **Chrome 98+**: Uses `COLR` (preferred modern format)
-- **Firefox 107+**: Uses `COLR`
-- **Safari 9.1+**: Uses `sbix` as fallback
-- The `SVG ` table is intentionally omitted to reduce file size (Firefox already has `COLR`, and Chrome never supported `SVG `)
+- **Chrome/Firefox/Safari**: All read `COLR` v0 directly — no fallback table needed.
+- The `'SVG '` table is dropped for web delivery since `COLR` already covers every browser that would otherwise use it.
 
 ### Installed Flavor (`.ttf`)
 
-Includes: `COLR` + `SVG ` + `sbix`
+Includes: `COLR` (v0) + `CPAL` + `'SVG '`.
 
-This preserves maximum compatibility with system font renderers:
-- **macOS 13+** (CoreText): Prefers `SVG `, falls back to `sbix` on older versions
-- **Other systems**: Fall back through `COLR` → `sbix`
+- **macOS 13+** (CoreText): Prefers `'SVG '`.
+- **Other systems**: Fall back to `COLR`.
 
 ### Implementation Notes
 
-- The `sbix` table is built custom by `python/font_tables.py` (nanoemoji's CLI doesn't expose this) from the same SVG assets nanoemoji uses for `COLR`
-- **Bitmap positioning**: Each bitmap is centered on its outline glyph's bounding box (nanoemoji's default left-anchors at x=0, which only looks correct for glyphs that fill their entire advance width)
+- **Bitmap positioning** no longer applies — the pipeline doesn't produce an `sbix` bitmap table, only vector `COLR`/`SVG` tables.
 
 ## Examples
 

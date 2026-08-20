@@ -7,7 +7,7 @@ A web service that converts PNG glyph images into TTF/WOFF2 fonts. The service u
 **Why hybrid?** Three core font tools have no JavaScript equivalent and would be weeks to rewrite from scratch:
 - **FontForge** — SVG→TTF outline compilation + boolean overlap union
 - **nanoemoji** — COLR v1 color-font table compiler  
-- **fontTools** — TTF binary table surgery (sbix grafting, table deletion)
+- **fontTools** — TTF binary table surgery (table deletion)
 
 By calling them as subprocesses, we keep the reliability of battle-tested tools while gaining the simplicity of Node.js for orchestration.
 
@@ -39,7 +39,7 @@ Subprocess Wrappers (src/subprocess/)
     ├→ maximumColor.ts → nanoemoji maximum_color (streamed stdout for progress)
     ├→ ttf2woff2.ts → pipe TTF through stdin/stdout
     ├→ png2svgCli.ts → python3 python/png2svg.py {trace,shift,flatten}
-    └→ fontTablesCli.ts → python3 python/font_tables.py {add-sbix,drop-tables}
+    └→ fontTablesCli.ts → python3 python/font_tables.py drop-tables
 ```
 
 ## File Structure
@@ -66,7 +66,7 @@ Subprocess Wrappers (src/subprocess/)
 - **src/subprocess/maximumColor.ts** — runMaximumColor(ttfPath, tempDir, jobId) with streaming progress
 - **src/subprocess/ttf2woff2.ts** — runTtf2Woff2(ttfPath, woff2Path) via stdin/stdout pipe
 - **src/subprocess/png2svgCli.ts** — runPng2SvgTrace/Shift/Flatten
-- **src/subprocess/fontTablesCli.ts** — runAddSbixTable, runDropUnusedTables
+- **src/subprocess/fontTablesCli.ts** — runDropUnusedTables
 
 ### Config & Deployment
 - **package.json** — Dependencies (express, multer, cors, archiver, smol-toml, which); scripts (build, start, dev)
@@ -76,7 +76,7 @@ Subprocess Wrappers (src/subprocess/)
 
 ### Python Scripts (called as subprocesses from TypeScript)
 - **python/png2svg.py** — Argparse subcommands: `trace`, `shift`, `flatten`
-- **python/font_tables.py** — Argparse subcommands: `add-sbix`, `drop-tables`
+- **python/font_tables.py** — Argparse subcommand: `drop-tables`
 - **python/font.py** — FontForge script (unchanged, invoked by fontforge.ts)
 - **python/config.py** — Shared config utilities (unchanged, imported by Python scripts)
 
@@ -92,12 +92,11 @@ When a user POSTs a font generation job:
    - Phase 3 (flattening): Union overlaps via `python3 python/png2svg.py flatten`
    - Phase 4 (fontforge): SVG → TTF via `fontforge -script python/font.py`
    - Phase 5 (svg-embed): Embed SVG outlines via `addsvg` (non-fatal if fails)
-   - Phase 6 (color-optimize): COLR table via `nanoemoji maximum_color` (streams progress, falls back to non-color TTF)
-   - Phase 7 (sbix): Add sbix table via `python3 python/font_tables.py add-sbix` (non-fatal)
-   - Phase 8 (drop tables for TTF): Remove redundant tables via `python3 python/font_tables.py drop-tables` (non-fatal)
-   - Phase 9 (woff): TTF → WOFF2 via `ttf2woff2` pipeline (non-fatal)
-   - Phase 10 (drop tables for WOFF2): Optimize WOFF2 via `python/font_tables.py drop-tables` (non-fatal)
-   - Phase 11 (zipping): Create ZIP (TTF + WOFF2 if present), mark status="completed"
+   - Phase 6 (color-optimize): COLR v0 table via `nanoemoji maximum_color` (streams progress, falls back to non-color TTF)
+   - Phase 7 (drop tables for TTF): Remove redundant tables via `python3 python/font_tables.py drop-tables` (non-fatal)
+   - Phase 8 (woff): TTF → WOFF2 via `ttf2woff2` pipeline (non-fatal)
+   - Phase 9 (drop tables for WOFF2): Optimize WOFF2 via `python/font_tables.py drop-tables` (non-fatal)
+   - Phase 10 (zipping): Create ZIP (TTF + WOFF2 if present), mark status="completed"
 3. **Heartbeat stops** when pipeline completes or fails
 4. **Job polling** reads status.json; clients see phase, detail, updated_at
 5. **Result download** checks status="completed", serves ZIP file
@@ -128,7 +127,7 @@ perJobLocks.set(jobId, lock.then(async () => {
 **Cleanup:** Heartbeat detects jobs silent >90 seconds (likely crashed) and marks them failed.
 
 ### 3. Non-Fatal Tool Failures
-**Design:** Some tools are best-effort (addsvg, nanoemoji, sbix grafting). Failures don't stop the pipeline; they log warnings and the pipeline continues:
+**Design:** Some tools are best-effort (addsvg, nanoemoji, table dropping). Failures don't stop the pipeline; they log warnings and the pipeline continues:
 ```typescript
 // addsvg fails → log warning, continue with TTF alone
 const result = await runAddsvg(...);
@@ -163,13 +162,13 @@ writeFileSync(..., JSON.stringify(merged));
 ```
 
 ### 6. Python CLI Subcommands (argparse)
-**Why?** python/png2svg.py and python/font_tables.py contain functions (trace, shift, flatten, add_sbix, drop_tables) that the Python code calls directly, but TypeScript must invoke them as subprocess CLI commands.
+**Why?** python/png2svg.py and python/font_tables.py contain functions (trace, shift, flatten, drop_tables) that the Python code calls directly, but TypeScript must invoke them as subprocess CLI commands.
 
 **Solution:** Refactor to argparse subparsers:
 ```bash
 python3 python/png2svg.py trace --png-folder ... --svg-output ... --target-upm ...
 python3 python/png2svg.py shift --svg-folder ... --out-folder ... --target-upm ... --descent ...
-python3 python/font_tables.py add-sbix --font-path ... --build-dir ... --source-ttf-path ...
+python3 python/font_tables.py drop-tables --font-path ... --flavor ...
 ```
 
 ## Development
