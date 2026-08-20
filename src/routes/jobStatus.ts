@@ -3,7 +3,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import { readJobStatus, failOrphanedJobs } from "../jobStore.js";
+import { readJobStatus } from "../jobStore.js";
 import { JOB_ID_RE } from "../constants.js";
 
 const router = Router();
@@ -15,9 +15,6 @@ router.get("/api/job/:id", (req: Request, res: Response) => {
     if (!JOB_ID_RE.test(jobId)) {
       return res.status(400).json({ detail: "Invalid job ID format" });
     }
-
-    // Check for orphaned jobs and fail them if needed
-    failOrphanedJobs();
 
     const status = readJobStatus(jobId);
     if (!status) {

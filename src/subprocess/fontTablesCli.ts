@@ -5,8 +5,9 @@
 
 import { runProcess } from "./runProcess.js";
 import { PYTHON_BIN } from "./toolPaths.js";
+import { RunProcessResult } from "../types.js";
 
-export async function runDropUnusedTables(fontPath: string, flavor: "ttf" | "woff2"): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runDropUnusedTables(fontPath: string, flavor: "ttf" | "woff2"): Promise<RunProcessResult> {
   return runProcess(PYTHON_BIN, [
     "python/font_tables.py",
     "drop-tables",

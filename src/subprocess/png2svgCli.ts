@@ -4,8 +4,9 @@
 
 import { runProcess } from "./runProcess.js";
 import { PYTHON_BIN } from "./toolPaths.js";
+import { RunProcessResult } from "../types.js";
 
-export async function runPng2SvgTrace(pngFolder: string, svgOutput: string, targetUpm: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runPng2SvgTrace(pngFolder: string, svgOutput: string, targetUpm: number): Promise<RunProcessResult> {
   return runProcess(PYTHON_BIN, [
     "python/png2svg.py",
     "trace",
@@ -18,7 +19,7 @@ export async function runPng2SvgTrace(pngFolder: string, svgOutput: string, targ
   ]);
 }
 
-export async function runPng2SvgShift(svgFolder: string, outFolder: string, targetUpm: number, descent: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runPng2SvgShift(svgFolder: string, outFolder: string, targetUpm: number, descent: number): Promise<RunProcessResult> {
   return runProcess(PYTHON_BIN, [
     "python/png2svg.py",
     "shift",
@@ -33,7 +34,7 @@ export async function runPng2SvgShift(svgFolder: string, outFolder: string, targ
   ]);
 }
 
-export async function runPng2SvgFlatten(svgFolder: string, outFolder: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runPng2SvgFlatten(svgFolder: string, outFolder: string): Promise<RunProcessResult> {
   return runProcess(PYTHON_BIN, [
     "python/png2svg.py",
     "flatten",

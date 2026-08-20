@@ -5,7 +5,7 @@
 import express from "express";
 import cors from "cors";
 import { PORT, CORS_ORIGINS } from "./constants.js";
-import { failOrphanedJobs } from "./jobStore.js";
+import { startOrphanJobWatcher } from "./jobStore.js";
 import generateFontRouter from "./routes/generateFont.js";
 import jobStatusRouter from "./routes/jobStatus.js";
 import jobResultRouter from "./routes/jobResult.js";
@@ -31,8 +31,8 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Initialize job store (fail orphaned jobs at startup)
-failOrphanedJobs();
+// jobStore owns its own lifecycle GC from here on — routes never trigger it.
+startOrphanJobWatcher();
 
 // Routes
 app.use(generateFontRouter);

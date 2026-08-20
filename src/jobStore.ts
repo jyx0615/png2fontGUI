@@ -120,9 +120,8 @@ export function sweepStaleJobs(): void {
  * Marks jobs with stale heartbeats (dead worker threads) as failed.
  * A live worker heartbeats updated_at every HEARTBEAT_SECONDS,
  * so non-terminal jobs with stale updated_at have no thread behind them.
- * Called at startup and inline in status checks.
  */
-export function failOrphanedJobs(): void {
+function failOrphanedJobs(): void {
   if (!existsSync(JOBS_ROOT)) {
     return;
   }
@@ -152,4 +151,19 @@ export function failOrphanedJobs(): void {
   } catch {
     // Ignore errors
   }
+}
+
+let orphanWatcher: NodeJS.Timeout | null = null;
+
+/**
+ * Starts jobStore's own orphaned-job GC, so callers never need to trigger it
+ * themselves (e.g. as a side effect of an unrelated status read). Idempotent —
+ * safe to call once at server startup.
+ */
+export function startOrphanJobWatcher(): void {
+  if (orphanWatcher) {
+    return;
+  }
+  failOrphanedJobs();
+  orphanWatcher = setInterval(failOrphanedJobs, ORPHAN_STALE_SECONDS * 1000);
 }

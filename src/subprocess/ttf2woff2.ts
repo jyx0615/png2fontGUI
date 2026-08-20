@@ -5,8 +5,9 @@
 import { createReadStream, createWriteStream } from "fs";
 import { spawn } from "child_process";
 import { TTF2WOFF2_BIN } from "./toolPaths.js";
+import { RunProcessResult } from "../types.js";
 
-export async function runTtf2Woff2(ttfPath: string, woff2Path: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runTtf2Woff2(ttfPath: string, woff2Path: string): Promise<RunProcessResult> {
   return new Promise((resolve) => {
     const input = createReadStream(ttfPath);
     const output = createWriteStream(woff2Path);

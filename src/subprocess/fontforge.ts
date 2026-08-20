@@ -4,6 +4,7 @@
 
 import { runProcess } from "./runProcess.js";
 import { FONTFORGE_BIN } from "./toolPaths.js";
+import { RunProcessResult } from "../types.js";
 
 export async function runFontForge(
   svgFolder: string,
@@ -19,7 +20,7 @@ export async function runFontForge(
   lineHeight: number,
   letterSpacing: number,
   monospace: boolean
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+): Promise<RunProcessResult> {
   const args = [
     "-script",
     "python/font.py",

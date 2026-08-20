@@ -7,33 +7,6 @@ import { parse } from "smol-toml";
 import { FontConfig, VerticalMetricsResult } from "./types.js";
 
 /**
- * Parses a filename to extract its Unicode codepoint.
- * Supports formats like: "A.svg", "u0041.svg", "0041.svg"
- */
-export function svgFilenameToCodepoint(filename: string): number {
-  const stem = filename.split(".")[0];
-  const prefix = stem.split("_")[0];
-
-  // Single character: A → codepoint of 'A'
-  if (prefix.length === 1) {
-    return prefix.charCodeAt(0);
-  }
-
-  // Prefixed hex: u0041 or 0041
-  const uPrefixMatch = prefix.match(/^u([0-9a-fA-F]{4,6})$/);
-  if (uPrefixMatch) {
-    return parseInt(uPrefixMatch[1], 16);
-  }
-
-  const hexMatch = prefix.match(/^[0-9a-fA-F]{4,6}$/);
-  if (hexMatch) {
-    return parseInt(hexMatch[0], 16);
-  }
-
-  throw new Error(`Cannot infer a Unicode code point from ${filename}`);
-}
-
-/**
  * Computes vertical metrics (ascent, descent, line height) for a given UPM.
  * Uses the classic 80/20 em split with 1.2× line-height convention,
  * matching Times/Arial-class fonts so generated fonts drop in next to system fonts

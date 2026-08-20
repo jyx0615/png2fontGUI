@@ -12,7 +12,8 @@
 
 import { runProcess } from "./runProcess.js";
 import { ADDSVG_BIN } from "./toolPaths.js";
+import { RunProcessResult } from "../types.js";
 
-export async function runAddsvg(svgFolder: string, ttfPath: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export async function runAddsvg(svgFolder: string, ttfPath: string): Promise<RunProcessResult> {
   return runProcess(ADDSVG_BIN, ["-k", svgFolder, ttfPath]);
 }

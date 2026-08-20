@@ -48,7 +48,7 @@ Subprocess Wrappers (src/subprocess/)
 - **src/server.ts** — Express app, CORS, routes, listen() on port 8000
 - **src/pipeline.ts** — Main orchestrator: runGenerationJob() phase machine + heartbeat
 - **src/jobStore.ts** — jobDir(), writeJobStatus(), readJobStatus(), sweepStaleJobs(), failOrphanedJobs()
-- **src/config.ts** — svgFilenameToCodepoint(), verticalMetrics(), loadFontConfig() — pure utilities ported from Python
+- **src/config.ts** — verticalMetrics(), loadFontConfig() — pure utilities ported from Python
 - **src/types.ts** — JobStatus, JobLifecycleStatus, FontConfig, GenerateFontParams, RunProcessResult
 - **src/constants.ts** — JOBS_ROOT, JOB_TTL_SECONDS, JOB_ID_RE, CORS_ORIGINS, PORT
 
