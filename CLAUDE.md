@@ -34,12 +34,12 @@ Job Store (src/jobStore.ts)
     └→ TTL sweep: deletes job dirs > 2 hours old on every POST start
 
 Subprocess Wrappers (src/subprocess/)
-    ├→ fontforge.ts → fontforge -script font.py ...
+    ├→ fontforge.ts → fontforge -script python/font.py ...
     ├→ addsvg.ts → addsvg <svgFolder> <ttfPath>
     ├→ maximumColor.ts → nanoemoji maximum_color (streamed stdout for progress)
     ├→ ttf2woff2.ts → pipe TTF through stdin/stdout
-    ├→ png2svgCli.ts → python3 png2svg.py {trace,shift,flatten}
-    └→ fontTablesCli.ts → python3 font_tables.py {add-sbix,drop-tables}
+    ├→ png2svgCli.ts → python3 python/png2svg.py {trace,shift,flatten}
+    └→ fontTablesCli.ts → python3 python/font_tables.py {add-sbix,drop-tables}
 ```
 
 ## File Structure
@@ -75,10 +75,10 @@ Subprocess Wrappers (src/subprocess/)
 - **setup_env.sh** — (unchanged) Provision FontForge, nanoemoji, ttf2woff2, Python packages
 
 ### Python Scripts (called as subprocesses from TypeScript)
-- **png2svg.py** — Argparse subcommands: `trace`, `shift`, `flatten`
-- **font_tables.py** — Argparse subcommands: `add-sbix`, `drop-tables`
-- **font.py** — FontForge script (unchanged, invoked by fontforge.ts)
-- **config.py** — Shared config utilities (unchanged, imported by Python scripts)
+- **python/png2svg.py** — Argparse subcommands: `trace`, `shift`, `flatten`
+- **python/font_tables.py** — Argparse subcommands: `add-sbix`, `drop-tables`
+- **python/font.py** — FontForge script (unchanged, invoked by fontforge.ts)
+- **python/config.py** — Shared config utilities (unchanged, imported by Python scripts)
 
 ## Pipeline Execution Flow
 
@@ -87,16 +87,16 @@ When a user POSTs a font generation job:
 1. **HTTP Handler** saves PNG files to `tempdir/png2font_jobs/{jobId}/png_glyphs/`, writes initial status
 2. **runGenerationJob()** fires and forgets (async, no await):
    - Starts heartbeat: every 15s updates `updated_at` in status.json
-   - Phase 1 (tracing): PNG → SVG via `python3 png2svg.py trace`
-   - Phase 2 (shifting): SVG vertical metrics via `python3 png2svg.py shift`
-   - Phase 3 (flattening): Union overlaps via `python3 png2svg.py flatten`
-   - Phase 4 (fontforge): SVG → TTF via `fontforge -script font.py`
+   - Phase 1 (tracing): PNG → SVG via `python3 python/png2svg.py trace`
+   - Phase 2 (shifting): SVG vertical metrics via `python3 python/png2svg.py shift`
+   - Phase 3 (flattening): Union overlaps via `python3 python/png2svg.py flatten`
+   - Phase 4 (fontforge): SVG → TTF via `fontforge -script python/font.py`
    - Phase 5 (svg-embed): Embed SVG outlines via `addsvg` (non-fatal if fails)
    - Phase 6 (color-optimize): COLR table via `nanoemoji maximum_color` (streams progress, falls back to non-color TTF)
-   - Phase 7 (sbix): Add sbix table via `python3 font_tables.py add-sbix` (non-fatal)
-   - Phase 8 (drop tables for TTF): Remove redundant tables via `python3 font_tables.py drop-tables` (non-fatal)
+   - Phase 7 (sbix): Add sbix table via `python3 python/font_tables.py add-sbix` (non-fatal)
+   - Phase 8 (drop tables for TTF): Remove redundant tables via `python3 python/font_tables.py drop-tables` (non-fatal)
    - Phase 9 (woff): TTF → WOFF2 via `ttf2woff2` pipeline (non-fatal)
-   - Phase 10 (drop tables for WOFF2): Optimize WOFF2 via `font_tables.py drop-tables` (non-fatal)
+   - Phase 10 (drop tables for WOFF2): Optimize WOFF2 via `python/font_tables.py drop-tables` (non-fatal)
    - Phase 11 (zipping): Create ZIP (TTF + WOFF2 if present), mark status="completed"
 3. **Heartbeat stops** when pipeline completes or fails
 4. **Job polling** reads status.json; clients see phase, detail, updated_at
@@ -163,13 +163,13 @@ writeFileSync(..., JSON.stringify(merged));
 ```
 
 ### 6. Python CLI Subcommands (argparse)
-**Why?** png2svg.py and font_tables.py contain functions (trace, shift, flatten, add_sbix, drop_tables) that the Python code calls directly, but TypeScript must invoke them as subprocess CLI commands.
+**Why?** python/png2svg.py and python/font_tables.py contain functions (trace, shift, flatten, add_sbix, drop_tables) that the Python code calls directly, but TypeScript must invoke them as subprocess CLI commands.
 
 **Solution:** Refactor to argparse subparsers:
 ```bash
-python3 png2svg.py trace --png-folder ... --svg-output ... --target-upm ...
-python3 png2svg.py shift --svg-folder ... --out-folder ... --target-upm ... --descent ...
-python3 font_tables.py add-sbix --font-path ... --build-dir ... --source-ttf-path ...
+python3 python/png2svg.py trace --png-folder ... --svg-output ... --target-upm ...
+python3 python/png2svg.py shift --svg-folder ... --out-folder ... --target-upm ... --descent ...
+python3 python/font_tables.py add-sbix --font-path ... --build-dir ... --source-ttf-path ...
 ```
 
 ## Development
@@ -255,7 +255,7 @@ This codebase was ported from `app.py`, `pipeline.py`, `job_store.py` with exact
 - `nanoemoji fails`: Check if `nanoemoji` package installed in conda env (`pip list | grep nanoemoji`)
 
 ### Performance
-- PNG tracing (vtracer) is slow; use parallel workers in `png2svg.py` (already implemented)
+- PNG tracing (vtracer) is slow; use parallel workers in `python/png2svg.py` (already implemented)
 - Nanoemoji color optimization can take 10–20 minutes for large fonts
 - WOFF2 conversion is fast (<1 second per font)
 

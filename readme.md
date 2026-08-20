@@ -123,7 +123,7 @@ src/
 ├── server.ts               # Express app, CORS, routes, listen()
 ├── pipeline.ts              # runGenerationJob(): phase-machine orchestrator + heartbeat
 ├── jobStore.ts               # Disk-backed job status (atomic writes, TTL sweep, orphan detection)
-├── config.ts                  # Pure config utilities ported from config.py
+├── config.ts                  # Pure config utilities ported from python/config.py
 ├── types.ts                    # JobStatus, FontConfig, GenerateFontParams, RunProcessResult
 ├── constants.ts                 # JOBS_ROOT, JOB_TTL_SECONDS, CORS_ORIGINS, PORT, etc.
 ├── routes/
@@ -134,18 +134,18 @@ src/
 └── subprocess/
     ├── runProcess.ts                  # Shared spawn + capture-output helper
     ├── toolPaths.ts                    # Binary path resolution (env-var -> which -> fallback)
-    ├── fontforge.ts                     # fontforge -script font.py ...
+    ├── fontforge.ts                     # fontforge -script python/font.py ...
     ├── addsvg.ts                         # addsvg <svgFolder> <ttfPath>
     ├── maximumColor.ts                    # nanoemoji maximum_color (streamed progress)
     ├── ttf2woff2.ts                         # TTF -> WOFF2 pipe
-    ├── png2svgCli.ts                         # png2svg.py {trace,shift,flatten}
-    └── fontTablesCli.ts                       # font_tables.py {add-sbix,drop-tables}
+    ├── png2svgCli.ts                         # python/png2svg.py {trace,shift,flatten}
+    └── fontTablesCli.ts                       # python/font_tables.py {add-sbix,drop-tables}
 
 # Python scripts invoked as subprocesses from TypeScript:
-png2svg.py       # Argparse subcommands: trace, shift, flatten
-font_tables.py    # Argparse subcommands: add-sbix, drop-tables
-font.py            # FontForge script (unchanged, invoked by fontforge.ts)
-config.py            # Shared config utilities (imported by the Python scripts)
+python/png2svg.py       # Argparse subcommands: trace, shift, flatten
+python/font_tables.py    # Argparse subcommands: add-sbix, drop-tables
+python/font.py            # FontForge script (unchanged, invoked by fontforge.ts)
+python/config.py            # Shared config utilities (imported by the Python scripts)
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full architecture, key design decisions, and troubleshooting reference.
@@ -156,7 +156,7 @@ The complete font generation process, orchestrated by `pipeline.ts`'s `runGenera
 
 ### Step 1: PNG to SVG Tracing
 ```
-python3 png2svg.py trace
+python3 python/png2svg.py trace
 ```
 Uses VTracer to trace each PNG into a color SVG with:
 - Baseline at y=0
@@ -164,19 +164,19 @@ Uses VTracer to trace each PNG into a color SVG with:
 
 ### Step 2: Baseline Adjustment for Font Metrics
 ```
-python3 png2svg.py shift
+python3 python/png2svg.py shift
 ```
 Shifts every SVG down by the font's descent value. This allows metric adjustments without re-tracing (faster pipeline).
 
 ### Step 3: Flatten to Monochrome Outlines
 ```
-python3 png2svg.py flatten
+python3 python/png2svg.py flatten
 ```
 Unions each color glyph into a single monochrome silhouette for FontForge. FontForge cannot efficiently handle hundreds of overlapping paths, so flattening (parallelized per glyph) is required. This step is computationally intensive.
 
 ### Step 4: Generate Base Font
 ```
-fontforge -script font.py
+fontforge -script python/font.py
 ```
 FontForge imports the flattened silhouettes and produces the base TTF:
 - Scales and positions each glyph
@@ -197,13 +197,13 @@ Generates a `COLR` (v1) table from the `'SVG '` table that was embedded in step 
 
 ### Step 7: Add sbix Table
 ```
-python3 font_tables.py add-sbix
+python3 python/font_tables.py add-sbix
 ```
 Custom script that grafts an `sbix` table (built from nanoemoji's extracted picosvg assets). Nanoemoji's own tools can't add sbix, so a donor font is built and merged in using fontTools. Non-fatal.
 
 ### Step 8: Remove Unused Tables
 ```
-python3 font_tables.py drop-tables
+python3 python/font_tables.py drop-tables
 ```
 For web distribution, removes:
 - `'SVG '` table (Firefox uses `COLR`, Chrome never supported `SVG`)
@@ -247,7 +247,7 @@ This preserves maximum compatibility with system font renderers:
 
 ### Implementation Notes
 
-- The `sbix` table is built custom by `font_tables.py` (nanoemoji's CLI doesn't expose this) from the same SVG assets nanoemoji uses for `COLR`
+- The `sbix` table is built custom by `python/font_tables.py` (nanoemoji's CLI doesn't expose this) from the same SVG assets nanoemoji uses for `COLR`
 - **Bitmap positioning**: Each bitmap is centered on its outline glyph's bounding box (nanoemoji's default left-anchors at x=0, which only looks correct for glyphs that fill their entire advance width)
 
 ## Examples
@@ -298,7 +298,7 @@ npm run build
 
 **Solution:** Use the supported CLI invocation instead (this is exactly what `fontforge.ts` does under the hood):
 ```bash
-fontforge -script font.py
+fontforge -script python/font.py
 ```
 
 ### Missing Python Packages

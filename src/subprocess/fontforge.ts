@@ -22,7 +22,7 @@ export async function runFontForge(
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const args = [
     "-script",
-    "font.py",
+    "python/font.py",
     svgFolder,
     "--output",
     outputTtf,
