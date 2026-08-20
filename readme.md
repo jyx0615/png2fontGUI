@@ -4,62 +4,107 @@
 
 **png2font** converts bitmap glyph PNGs into monospace TTF (TrueType Font) files with color support. It traces PNG images to SVG, normalizes them, flattens them for outline generation, and embeds both SVG and color table data (COLR, sbix, SVG) into the final font for maximum browser and OS compatibility.
 
+The service is a **TypeScript/Node.js HTTP API** that orchestrates job management and the multi-step generation pipeline, delegating font engineering to proven external tools (FontForge, nanoemoji, fontTools) as subprocesses. See [CLAUDE.md](CLAUDE.md) for the full architecture writeup.
+
+## Prerequisites
+
+- **Node.js**: v18.0.0 or later
+- **npm**: v9.0.0 or later
+- **FontForge**: required before any other setup. Install it using the [official instructions](https://github.com/fontforge/fontforge/blob/master/INSTALL.md).
+- **Python environment** (managed via conda, provisioned by `setup_env.sh`): nanoemoji, vtracer, fontTools, and the other Python-side tools.
+
 ## Quick Start
 
-### Prerequisites
-
-**FontForge** is required before any other setup. Install it using the [official instructions](https://github.com/fontforge/fontforge/blob/master/INSTALL.md), then proceed with the rest of the setup.
-
-### Setup & First Run
+### 1. Initialize the environment
 
 ```bash
-# Initialize the environment (recommended with conda)
+# Provisions FontForge, nanoemoji, ttf2woff2, and Python packages (recommended with conda)
 ./setup_env.sh
+```
 
-# Generate a font from PNGs
-./run.sh [PNG_FOLDER] [FONTNAME]
+### 2. Install Node dependencies
 
-# Examples:
-./run.sh                # Use glyphs folder and font name from config.toml
-./run.sh my_pngs MyType # Use folder my_pngs, produce MyType.ttf
+```bash
+npm install
+```
+
+### 3. Build and run
+
+```bash
+npm run build   # Compiles static CSS (Tailwind) and TypeScript (src/ -> dist/)
+npm start        # Runs dist/server.js
+```
+
+For local development with hot-reload:
+
+```bash
+npm run dev      # tsx watch src/server.ts + Tailwind watch
+```
+
+Or use the wrapper script, which activates the conda env first:
+
+```bash
+./run.sh
+```
+
+The server starts on **`http://127.0.0.1:8000`**.
+
+### 4. Test it
+
+```bash
+# Health check
+curl http://127.0.0.1:8000/health
+
+# Upload PNGs and start a generation job
+curl -F "files=@glyphs/A.png" \
+     -F "fontname=TestFont" \
+     -F "fullname=Test Font" \
+     http://127.0.0.1:8000/api/generate-font
+# => { "job_id": "abcd1234...", "status": "queued" }
+
+# Poll job status
+curl http://127.0.0.1:8000/api/job/abcd1234
+
+# Download the result once status="completed"
+curl http://127.0.0.1:8000/api/job/abcd1234/result -o fonts.zip
+unzip fonts.zip
 ```
 
 ## Web UI & API
-
-### Starting the Web Application
-
-```bash
-./run.sh                    # Uses config.toml for parameters
-# or
-uvicorn app:app --reload   # For development with hot-reload
-```
 
 ### Accessing the Interface
 
 - **Browser UI**: http://127.0.0.1:8000/
   - Drag-and-drop PNG uploads
   - Live parameter controls
-  - Font preview and download
+  - Tab-based font preview (TTF/WOFF/WOFF2) with size, letter-spacing, and line-height controls
 
-- **Interactive API Docs**: http://127.0.0.1:8000/docs
-  - Swagger/OpenAPI documentation
-  - Try API endpoints directly from your browser
+### API Reference
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/health` | Health check — returns `{ "status": "ok" }` |
+| `POST` | `/api/generate-font` | Upload PNGs (`files` field, multipart/form-data) and kick off a generation job |
+| `GET` | `/api/job/:id` | Poll job status — `{ status, phase, detail, updated_at }` |
+| `GET` | `/api/job/:id/result` | Download the result ZIP once `status="completed"` |
 
 ## Dependencies & Tools
 
 ### External Binaries
 
-These tools must be installed separately:
+These tools must be installed separately (see `setup_env.sh`):
 
 | Tool | Purpose | Installation |
 |------|---------|--------------|
 | **FontForge** | Font generation and scripting | [Official guide](https://github.com/fontforge/fontforge/blob/master/INSTALL.md) |
 | **svgcleaner** | SVG normalization and optimization | [Download](https://github.com/RazrFalcon/svgcleaner/releases), place in project root, run `chmod +x svgcleaner` |
 | **addsvg** | Embed SVG tables into TTF | Included in [opentype-svg](https://github.com/adobe-type-tools/opentype-svg) tools |
+| **nanoemoji** | COLR v1 color-font table compiler | Installed via `setup_env.sh` / pip |
+| **ttf2woff2** | TTF → WOFF2 conversion | Installed via `setup_env.sh` |
 
 ## Configuration
 
-Font generation settings are defined in [`config.toml`](config.toml). CLI arguments override config file values.
+Font generation settings are defined in [`config.toml`](config.toml). Request parameters (from the API/UI) override config file values.
 
 ### Key Configuration Options
 
@@ -71,63 +116,102 @@ Font generation settings are defined in [`config.toml`](config.toml). CLI argume
 | `[font].fullname` | Full display name for the font | `Default Font` |
 | `[font].familyname` | Font family name | `Default` |
 
-**Note:** Command-line arguments take precedence over `config.toml` settings.
+## Project Structure
 
-## Scripts & Usage
+```
+src/
+├── server.ts               # Express app, CORS, routes, listen()
+├── pipeline.ts              # runGenerationJob(): phase-machine orchestrator + heartbeat
+├── jobStore.ts               # Disk-backed job status (atomic writes, TTL sweep, orphan detection)
+├── config.ts                  # Pure config utilities ported from config.py
+├── types.ts                    # JobStatus, FontConfig, GenerateFontParams, RunProcessResult
+├── constants.ts                 # JOBS_ROOT, JOB_TTL_SECONDS, CORS_ORIGINS, PORT, etc.
+├── routes/
+│   ├── generateFont.ts           # POST /api/generate-font
+│   ├── jobStatus.ts               # GET /api/job/:id
+│   ├── jobResult.ts                # GET /api/job/:id/result
+│   └── staticIndex.ts                # GET / and /static mount
+└── subprocess/
+    ├── runProcess.ts                  # Shared spawn + capture-output helper
+    ├── toolPaths.ts                    # Binary path resolution (env-var -> which -> fallback)
+    ├── fontforge.ts                     # fontforge -script font.py ...
+    ├── addsvg.ts                         # addsvg <svgFolder> <ttfPath>
+    ├── maximumColor.ts                    # nanoemoji maximum_color (streamed progress)
+    ├── ttf2woff2.ts                         # TTF -> WOFF2 pipe
+    ├── png2svgCli.ts                         # png2svg.py {trace,shift,flatten}
+    └── fontTablesCli.ts                       # font_tables.py {add-sbix,drop-tables}
 
-### Main Entry Point
-
-**`run.sh`** — Orchestrates the entire pipeline from PNG images to TTF font.
-
-```bash
-./run.sh [PNG_FOLDER] [FONTNAME]
+# Python scripts invoked as subprocesses from TypeScript:
+png2svg.py       # Argparse subcommands: trace, shift, flatten
+font_tables.py    # Argparse subcommands: add-sbix, drop-tables
+font.py            # FontForge script (unchanged, invoked by fontforge.ts)
+config.py            # Shared config utilities (imported by the Python scripts)
 ```
 
-| Parameter | Behavior |
-|-----------|----------|
-| *(none)* | Use folder `glyphs` and font name from `config.toml` |
-| `PNG_FOLDER FONTNAME` | Use custom folder and font name |
+See [CLAUDE.md](CLAUDE.md) for the full architecture, key design decisions, and troubleshooting reference.
 
-**Examples:**
-```bash
-./run.sh                   # Use defaults from config.toml
-./run.sh ./my_pngs MyType  # Custom folder and font name
+## Generation Pipeline
+
+The complete font generation process, orchestrated by `pipeline.ts`'s `runGenerationJob()`:
+
+### Step 1: PNG to SVG Tracing
 ```
-
-### Component Scripts
-
-#### `app.py` — Web API Server
-FastAPI application that provides HTTP endpoints for font generation.
-
-**Modules:**
-- `pipeline.py` — Per-job font generation pipeline (PNG → SVG → TTF → WOFF2 → ZIP)
-- `job_store.py` — Persistent job state management (stores status, TTL expiry, detects orphans)
-- `font_tables.py` — TTF post-processing (sbix table grafting, unused table removal)
-
-#### `png2svg.py` — PNG to SVG Tracing
-Converts PNG images to normalized SVG outlines using VTracer.
-
-```bash
-python3 png2svg.py
-
-# With custom folders:
-python3 png2svg.py --png_folder ./my_pngs --svg_output ./my_svgs
+python3 png2svg.py trace
 ```
+Uses VTracer to trace each PNG into a color SVG with:
+- Baseline at y=0
+- Ink positioned at negative y (above baseline)
 
-**Default directories:**
-- Input: `glyphs/`
-- Output: `svg_glyphs/`
+### Step 2: Baseline Adjustment for Font Metrics
+```
+python3 png2svg.py shift
+```
+Shifts every SVG down by the font's descent value. This allows metric adjustments without re-tracing (faster pipeline).
 
-#### `font.py` — TTF Generation
-FontForge script that builds the final TTF from SVG outlines.
+### Step 3: Flatten to Monochrome Outlines
+```
+python3 png2svg.py flatten
+```
+Unions each color glyph into a single monochrome silhouette for FontForge. FontForge cannot efficiently handle hundreds of overlapping paths, so flattening (parallelized per glyph) is required. This step is computationally intensive.
 
-```bash
-# Use config.toml for naming:
+### Step 4: Generate Base Font
+```
 fontforge -script font.py
-
-# Override font names:
-fontforge -script font.py svg_glyphs --fontname MyFont --fullname "My Font" --familyname "My Family"
 ```
+FontForge imports the flattened silhouettes and produces the base TTF:
+- Scales and positions each glyph
+- Sets advance widths
+- Writes `<fontname>.ttf`
+
+### Step 5: Embed SVG Outlines
+```
+addsvg [ttf] [svg_folder]
+```
+Embeds the color SVGs (still at original aspect ratio, not flattened) into the TTF as an `'SVG '` table. Non-fatal if it fails.
+
+### Step 6: Generate COLR Table
+```
+nanoemoji maximum_color [ttf]
+```
+Generates a `COLR` (v1) table from the `'SVG '` table that was embedded in step 5. Falls back to the non-color TTF if it fails.
+
+### Step 7: Add sbix Table
+```
+python3 font_tables.py add-sbix
+```
+Custom script that grafts an `sbix` table (built from nanoemoji's extracted picosvg assets). Nanoemoji's own tools can't add sbix, so a donor font is built and merged in using fontTools. Non-fatal.
+
+### Step 8: Remove Unused Tables
+```
+python3 font_tables.py drop-tables
+```
+For web distribution, removes:
+- `'SVG '` table (Firefox uses `COLR`, Chrome never supported `SVG`)
+- FontForge's `FFTM` metadata table (always)
+
+### Step 9: Package & Export
+- Convert TTF → WOFF2 (web format) via `ttf2woff2`
+- Zip both `.ttf` and `.woff2` files for download
 
 ## Color Support & Browser Compatibility
 
@@ -166,69 +250,6 @@ This preserves maximum compatibility with system font renderers:
 - The `sbix` table is built custom by `font_tables.py` (nanoemoji's CLI doesn't expose this) from the same SVG assets nanoemoji uses for `COLR`
 - **Bitmap positioning**: Each bitmap is centered on its outline glyph's bounding box (nanoemoji's default left-anchors at x=0, which only looks correct for glyphs that fill their entire advance width)
 
-## Generation Pipeline
-
-The complete font generation process (orchestrated by `pipeline.py`'s `run_generation_job`):
-
-### Step 1: PNG to SVG Tracing
-```
-png2svg.convert_pngs_to_svgs()
-```
-Uses VTracer to trace each PNG into a color SVG with:
-- Baseline at y=0
-- Ink positioned at negative y (above baseline)
-
-### Step 2: Baseline Adjustment for Font Metrics
-```
-png2svg.shift_svgs_for_descent()
-```
-Shifts every SVG down by the font's descent value. This allows metric adjustments without re-tracing (faster pipeline).
-
-### Step 3: Flatten to Monochrome Outlines
-```
-png2svg.flatten_svgs_for_outlines()
-```
-Unions each color glyph into a single monochrome silhouette for FontForge. FontForge cannot efficiently handle hundreds of overlapping paths, so flattening (parallelized per glyph) is required. This step is computationally intensive.
-
-### Step 4: Generate Base Font
-```
-fontforge -script font.py
-```
-FontForge imports the flattened silhouettes and produces the base TTF:
-- Scales and positions each glyph
-- Sets advance widths
-- Writes `<fontname>.ttf`
-
-### Step 5: Embed SVG Outlines
-```
-addsvg [ttf] [svg_folder]
-```
-Embeds the color SVGs (still at original aspect ratio, not flattened) into the TTF as an `'SVG '` table.
-
-### Step 6: Generate COLR Table
-```
-nanoemoji maximum_color [ttf]
-```
-Generates a `COLR` (v1) table from the `'SVG '` table that was embedded in step 5.
-
-### Step 7: Add sbix Table
-```
-font_tables.add_sbix_table()
-```
-Custom script that grafts an `sbix` table (built from nanoemoji's extracted picosvg assets). Nanoemoji's own tools can't add sbix, so a donor font is built and merged in using fontTools.
-
-### Step 8: Remove Unused Tables (Web Flavor Only)
-```
-font_tables.subset_drop_unused_tables()
-```
-For web distribution, removes:
-- `'SVG '` table (Firefox uses `COLR`, Chrome never supported `SVG`)
-- FontForge's `FFTM` metadata table (always)
-
-### Step 9: Package & Export
-- Convert TTF → WOFF2 (web format)
-- Zip both `.ttf` and `.woff2` files for download
-
 ## Examples
 
 ### Before & After
@@ -245,10 +266,37 @@ For web distribution, removes:
 
 ## Troubleshooting
 
+### "Connection refused" / server won't start
+**Problem**: `npm start` fails or the browser can't reach `http://127.0.0.1:8000`
+
+**Solution**: Confirm the build succeeded (`npm run build`) and check server logs for errors on startup.
+
+### Port already in use
+**Problem**: `EADDRINUSE` error on port 8000
+
+**Solution**: Use a different port:
+```bash
+PORT=8001 npm start
+```
+
+### TypeScript compilation errors
+**Problem**: Errors during `npm run build`
+
+**Solution**: Check `tsconfig.json` (`.js` extensions are required on all relative imports — ES module requirement) and ensure all dependencies are installed:
+```bash
+npm install
+npm run build
+```
+
+### `job not found (404)`
+**Problem**: Polling `/api/job/:id` returns 404
+
+**Solution**: The job directory may have been deleted by the TTL sweep (2-hour expiry), or the job ID is malformed (must be 32 lowercase hex chars).
+
 ### FontForge Import Errors
 **Problem:** `fontforge` Python imports crash or segfault when run inside the interpreter.
 
-**Solution:** Use the supported CLI invocation instead:
+**Solution:** Use the supported CLI invocation instead (this is exactly what `fontforge.ts` does under the hood):
 ```bash
 fontforge -script font.py
 ```
@@ -256,7 +304,7 @@ fontforge -script font.py
 ### Missing Python Packages
 **Problem:** `ModuleNotFoundError` for packages like `vtracer`, `tomli`, etc.
 
-**Solution:** Install the package into the same environment:
+**Solution:** Install the package into the same environment used by `setup_env.sh`:
 ```bash
 pip install vtracer tomli pillow fontTools
 ```
@@ -268,6 +316,20 @@ pip install vtracer tomli pillow fontTools
 1. Download from https://github.com/RazrFalcon/svgcleaner/releases
 2. Place in project root directory
 3. Make executable: `chmod +x svgcleaner`
+
+### nanoemoji fails
+**Problem:** Color-optimize phase fails or falls back to a non-color TTF
+
+**Solution:** Check `nanoemoji` is installed in the conda env:
+```bash
+pip list | grep nanoemoji
+```
+
+## Additional Resources
+
+- [CLAUDE.md](CLAUDE.md) — Full architecture, key design decisions, and development guide
+- [config.toml](config.toml) — Font generation defaults
+- [package.json](package.json) — Dependencies and scripts
 
 ## Credits
 
