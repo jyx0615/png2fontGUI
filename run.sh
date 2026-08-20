@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start the png2font FastAPI Server
+# Start the png2font Hybrid Node/Python API Server
 echo "================================================================="
 echo "  🚀 Starting png2font API Server on http://127.0.0.1:8000"
+echo "  📦 Node: TypeScript orchestration + Python font tools"
 echo "  📦 Conda Environment: genFontAPI"
 echo "================================================================="
 
@@ -19,8 +20,9 @@ else
     eval "$(conda shell.bash hook)"
 fi
 
-# Activate the conda environment correctly
+# Activate the conda environment for PATH resolution (FontForge, python3, nanoemoji, ttf2woff2, etc.)
 conda activate genFontAPI
 
-# Run Uvicorn directly within the fully activated shell environment
-uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+# Build TypeScript and start Node server
+npm run build
+npm start
