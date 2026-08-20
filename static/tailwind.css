@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html.dark {
+    color-scheme: dark;
+  }
+}
+
+@layer components {
+  .step-item { @apply text-gray-400 dark:text-gray-500; }
+  .step-item .step-dot { @apply w-1.5 h-1.5 rounded-full bg-current opacity-40 flex-shrink-0; }
+  .step-item.active { @apply text-blue-600 dark:text-blue-400 font-semibold bg-blue-50 dark:bg-blue-900/20; }
+  .step-item.active .step-dot { @apply opacity-100; animation: step-pulse 1.2s ease-in-out infinite; }
+  .step-item.completed { @apply text-green-600 dark:text-green-400; }
+  .step-item.completed .step-dot { @apply opacity-100; }
+
+  .tab-btn { cursor: pointer; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+}
+
+@keyframes step-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.6); opacity: 0.6; }
+}

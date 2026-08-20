@@ -1,593 +1,279 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>png2font — Premium Font Generator</title>
-    <!-- Google Fonts -->
+    <title>png2font — Font Generator</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome/Lucide Icons via SVG or CDN -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- JSZip for ZIP file extraction -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
-<body>
-    <!-- Abstract Ambient Glow Backgrounds -->
-    <div class="glow-sphere glow-1"></div>
-    <div class="glow-sphere glow-2"></div>
-    <div class="glow-sphere glow-3"></div>
-
-    <div class="app-container">
-        <!-- Header -->
-        <header class="app-header">
-            <div class="logo-area">
-                <i data-lucide="type" class="logo-icon"></i>
-                <h1>png2font</h1>
-                <span class="badge">v1.0</span>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-50 transition-colors">
+    <!-- Header -->
+    <header class="sticky top-0 z-40 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <i data-lucide="type" class="w-6 h-6 text-blue-600"></i>
+                <h1 class="text-2xl font-bold">png2font</h1>
             </div>
-            <p class="subtitle">Convert PNG glyphs into pixel-perfect monospace OpenType TTF fonts instantly</p>
-            <div class="nav-links">
-                <a href="/docs" target="_blank" class="nav-link"><i data-lucide="file-text"></i> API Docs</a>
-            </div>
-        </header>
+            <button id="theme-toggle" class="px-3 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition">
+                <i data-lucide="moon" class="w-4 h-4" id="theme-icon"></i>
+            </button>
+        </div>
+    </header>
 
-        <main class="app-main">
-            <!-- Left Panel: Settings & Upload -->
-            <section class="control-panel glass-card">
-                <div class="panel-section">
-                    <h2 class="section-title"><i data-lucide="sliders"></i> Font Parameters</h2>
-                    
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="api-base-url">API Endpoint URL</label>
-                            <input type="text" id="api-base-url" value="" placeholder="Default (Relative /)">
-                            <span class="help-text">Custom backend URL (e.g. http://localhost:8000)</span>
+    <!-- Tabs -->
+    <div class="sticky top-16 z-30 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <div class="max-w-6xl mx-auto px-4 flex gap-4">
+            <button id="tab-generate" class="tab-btn active px-4 py-3 border-b-2 border-blue-600 text-blue-600 font-medium transition">
+                <i data-lucide="zap" class="inline w-4 h-4 mr-1"></i> Generate
+            </button>
+            <button id="tab-preview" class="tab-btn px-4 py-3 border-b-2 border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 font-medium transition">
+                <i data-lucide="eye" class="inline w-4 h-4 mr-1"></i> Preview Font
+            </button>
+        </div>
+    </div>
+
+    <!-- Tab Content -->
+    <main class="max-w-6xl mx-auto px-4 py-8">
+        <!-- Generate Tab -->
+        <div id="tab-content-generate" class="tab-content active">
+            <div class="grid lg:grid-cols-3 gap-6">
+                <!-- Settings Panel -->
+                <div class="lg:col-span-1">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-4">
+                        <h2 class="font-bold text-lg mb-4">Font Settings</h2>
+
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Font ID</label>
+                            <input type="text" id="fontname" value="MyCustomFont" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg text-sm">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">URL-friendly name</p>
                         </div>
 
-                        <div class="form-group">
-                            <label for="fontname">Font ID Name</label>
-                            <input type="text" id="fontname" value="MyCustomFont" placeholder="e.g. MyFont">
-                            <span class="help-text">URL-friendly, no spaces</span>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Full Name</label>
+                            <input type="text" id="fullname" value="My Custom Font" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg text-sm">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Display name</p>
                         </div>
 
-                        <div class="form-group">
-                            <label for="fullname">Full Font Name</label>
-                            <input type="text" id="fullname" value="My Custom Font" placeholder="e.g. My Custom Font">
-                            <span class="help-text">Visible name in font menus</span>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Family</label>
+                            <input type="text" id="familyname" value="My Family" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg text-sm">
                         </div>
 
-                        <div class="form-group">
-                            <label for="familyname">Font Family</label>
-                            <input type="text" id="familyname" value="My Family" placeholder="e.g. My Family">
-                            <span class="help-text">Logical grouping family</span>
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-sm font-medium">UPM: <span id="upm-val">1000</span></label>
+                            </div>
+                            <input type="range" id="upm" min="500" max="2048" value="1000" class="w-full">
                         </div>
-                    </div>
 
-                    <div class="slider-group">
-                        <div class="slider-header">
-                            <label for="upm">Units Per Em (UPM)</label>
-                            <span class="slider-value" id="upm-val">1000</span>
+                        <div class="flex items-center justify-between py-2">
+                            <label class="text-sm font-medium">Monospace</label>
+                            <input type="checkbox" id="monospace-toggle" class="w-4 h-4">
                         </div>
-                        <input type="range" id="upm" min="500" max="2048" step="1" value="1000">
-                        <span class="help-text">Grid scale width & height of the character canvas</span>
-                    </div>
 
-                    <div class="switch-group">
-                        <div class="switch-label-container">
-                            <label for="monospace-toggle">Monospace Layout</label>
-                            <span class="help-text">Generate a font with uniform character widths</span>
+                        <div id="advance-width-group">
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="text-sm font-medium">Width: <span id="width-val">600</span></label>
+                            </div>
+                            <input type="range" id="advance_width" min="500" max="2048" value="600" class="w-full">
                         </div>
-                        <label class="switch">
-                            <input type="checkbox" id="monospace-toggle" checked>
-                            <span class="slider-switch"></span>
-                        </label>
-                    </div>
 
-                    <div class="slider-group" id="advance-width-group">
-                        <div class="slider-header">
-                            <label for="advance_width">Monospace Width</label>
-                            <span class="slider-value" id="width-val">600</span>
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="text-sm font-medium">Raise: <span id="raise-val">0</span></label>
+                            </div>
+                            <input type="range" id="vertical_raise" min="-500" max="500" value="0" class="w-full">
                         </div>
-                        <input type="range" id="advance_width" min="500" max="2048" step="1" value="600">
-                        <span class="help-text">Monospace character width for all glyphs</span>
-                    </div>
-
-                    <div class="slider-group">
-                        <div class="slider-header">
-                            <label for="vertical_raise">Vertical Raise</label>
-                            <span class="slider-value" id="raise-val">0</span>
-                        </div>
-                        <input type="range" id="vertical_raise" min="-500" max="500" step="1" value="0">
-                        <span class="help-text">Moves character drawing baseline up or down</span>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Right Panel: Drag-and-drop & Grid Map -->
-            <section class="workspace-panel">
-                <!-- Dropzone -->
-                <div class="dropzone glass-card" id="dropzone">
-                    <input type="file" id="file-input" multiple accept="image/png" class="file-input">
-                    <i data-lucide="cloud-upload" class="upload-icon"></i>
-                    <h3>Drag & Drop PNG Glyphs</h3>
-                    <p>Or click to browse your local files</p>
-                    <div class="supported-formats">
-                        <span><strong>Standard:</strong> <code>A.png</code>, <code>b.png</code>, <code>5.png</code></span>
-                        <span><strong>Unicode Hex:</strong> <code>u0041.png</code>, <code>0041.png</code></span>
                     </div>
                 </div>
 
-                <!-- Accordion Guide -->
-                <details class="guide-accordion glass-card">
-                    <summary class="accordion-header">
-                        <span><i data-lucide="help-circle"></i> File Naming Guideline</span>
-                        <i data-lucide="chevron-down" class="chevron-icon"></i>
-                    </summary>
-                    <div class="accordion-content">
-                        <p>To let the system know which character each PNG represents, name your files according to these standards:</p>
-                        <ul>
-                            <li><strong>Single Characters:</strong> Simply name the file as the character itself (e.g. <code>A.png</code>, <code>z.png</code>, <code>7.png</code>, <code>$.png</code>). Case is preserved!</li>
-                            <li><strong>Unicode Format:</strong> Use prefix <code>u</code> followed by the hex codepoint (e.g. <code>u0041.png</code> for 'A', <code>u0035.png</code> for '5').</li>
-                            <li><strong>Raw Hex Format:</strong> Just name it with the 4-to-6 hex digits (e.g. <code>0041.png</code>).</li>
-                            <li><strong>Alphanumeric tags:</strong> You can append suffix after an underscore (e.g. <code>A_bold.png</code> or <code>u0041_alpha.png</code>). The prefix before the first underscore is used for codepoint resolution.</li>
-                        </ul>
+                <!-- Upload & Preview Panel -->
+                <div class="lg:col-span-2 space-y-4">
+                    <!-- Dropzone -->
+                    <div id="dropzone" class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition">
+                        <input type="file" id="file-input" multiple accept="image/png" class="hidden">
+                        <i data-lucide="cloud-upload" class="w-8 h-8 mx-auto mb-2 text-gray-400"></i>
+                        <h3 class="font-semibold">Drag & drop PNG glyphs</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">or click to browse</p>
                     </div>
-                </details>
 
-                <!-- Grid Preview -->
-                <div class="preview-section glass-card hidden" id="preview-card">
-                    <div class="preview-header">
-                        <h3>Uploaded Glyphs (<span id="file-count">0</span>)</h3>
-                        <button class="btn btn-danger-link" id="clear-btn"><i data-lucide="trash-2"></i> Clear All</button>
+                    <!-- Guide -->
+                    <details class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                        <summary class="font-semibold cursor-pointer flex items-center justify-between hover:text-blue-600">
+                            <span>File Naming Guide</span>
+                            <i data-lucide="chevron-down" class="w-4 h-4 transition group-open:rotate-180"></i>
+                        </summary>
+                        <div class="mt-3 text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                            <p><strong>Single char:</strong> A.png, z.png</p>
+                            <p><strong>Unicode:</strong> u0041.png</p>
+                            <p><strong>Hex:</strong> 0041.png</p>
+                        </div>
+                    </details>
+
+                    <!-- File Preview -->
+                    <div id="preview-card" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hidden">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="font-semibold">Uploaded: <span id="file-count">0</span></h3>
+                            <button id="clear-btn" class="text-red-600 hover:text-red-700 text-sm font-medium">Clear</button>
+                        </div>
+                        <div class="grid grid-cols-4 gap-2" id="glyph-grid"></div>
                     </div>
-                    <div class="glyph-grid" id="glyph-grid"></div>
-                </div>
 
-                <!-- Generate Trigger -->
-                <div class="action-footer">
-                    <button class="btn btn-primary btn-large disabled" id="generate-btn" disabled>
-                        <i data-lucide="zap"></i> Compile Monospace TTF
+                    <!-- Generate Button -->
+                    <button id="generate-btn" class="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <i data-lucide="zap" class="inline w-4 h-4 mr-2"></i> Generate Font
                     </button>
                 </div>
-            </section>
-        </main>
-    </div>
-
-    <!-- Active Loading Processing Modal -->
-    <div class="modal-overlay hidden" id="loading-modal">
-        <div class="modal-card glass-card">
-            <div class="spinner-container">
-                <div class="spinner"></div>
-                <div class="spinner-core"></div>
             </div>
-            <h3 id="modal-status">Initializing Compilation...</h3>
-            <div class="steps-progress">
-                <div class="step-item active" id="step-upload"><span class="step-dot"></span> Uploading glyph assets</div>
-                <div class="step-item" id="step-trace"><span class="step-dot"></span> Tracing PNGs to SVG contours</div>
-                <div class="step-item" id="step-compile"><span class="step-dot"></span> Building TTF with FontForge</div>
-                <div class="step-item" id="step-embed"><span class="step-dot"></span> Embedding color vector shapes</div>
-                <div class="step-item" id="step-optimize"><span class="step-dot"></span> Optimizing with nanoemoji & converting to WOFF</div>
+        </div>
+
+        <!-- Preview Tab -->
+        <div id="tab-content-preview" class="tab-content hidden">
+            <div class="grid lg:grid-cols-4 gap-6">
+                <!-- Controls -->
+                <div class="lg:col-span-1">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6 sticky top-32">
+                        <div>
+                            <h3 class="font-semibold mb-4">Load Font</h3>
+                            <input type="file" id="font-file-input" accept=".ttf,.woff,.woff2" class="hidden">
+                            <div id="font-dropzone" class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition">
+                                <i data-lucide="upload" class="w-6 h-6 mx-auto mb-1 text-gray-400"></i>
+                                <p class="text-xs">Drop TTF, WOFF, WOFF2</p>
+                            </div>
+                        </div>
+
+                        <div id="font-info-section" class="hidden space-y-3">
+                            <h3 class="font-semibold text-sm">Info</h3>
+                            <div class="space-y-2">
+                                <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                                    <p class="text-gray-600 dark:text-gray-400">Name</p>
+                                    <p class="font-mono truncate" id="info-font-name">-</p>
+                                </div>
+                                <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                                    <p class="text-gray-600 dark:text-gray-400">Size</p>
+                                    <p class="font-mono" id="info-file-size">-</p>
+                                </div>
+                                <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                                    <p class="text-gray-600 dark:text-gray-400">Format</p>
+                                    <p class="font-mono" id="info-format">-</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Preview Controls -->
+                        <div id="preview-controls-section" class="hidden space-y-4">
+                            <h3 class="font-semibold text-sm">Controls</h3>
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <label class="text-xs font-medium">Size: <span id="size-val">32</span>px</label>
+                                </div>
+                                <input type="range" id="preview-font-size" min="8" max="96" value="32" class="w-full">
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <label class="text-xs font-medium">Spacing: <span id="spacing-val">3</span>px</label>
+                                </div>
+                                <input type="range" id="preview-letter-spacing" min="-5" max="20" value="3" class="w-full">
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <label class="text-xs font-medium">Line Height: <span id="line-height-val">1.5</span></label>
+                                </div>
+                                <input type="range" id="preview-line-height" min="1" max="3" step="0.1" value="1.5" class="w-full">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview Area -->
+                <div class="lg:col-span-3 space-y-4">
+                    <!-- Input -->
+                    <div id="test-bench-section" class="hidden">
+                        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                            <label class="block text-sm font-medium mb-2">Edit Text</label>
+                            <textarea id="preview-test-text" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg font-mono text-sm h-24" placeholder="Type here..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Preview Display -->
+                    <div id="preview-display-section" class="hidden bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8">
+                        <div id="preview-display" class="text-lg leading-relaxed whitespace-pre-line" style="word-break: break-word;">
+                            The quick brown fox jumps over the lazy dog
+                        </div>
+                    </div>
+
+                    <!-- Character Set -->
+                    <div id="charset-section" class="hidden bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                        <h3 class="font-semibold mb-3 text-sm">Character Set</h3>
+                        <div id="preview-charset" class="p-4 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg font-mono text-md leading-relaxed overflow-x-auto">
+                            abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 !@#$%^&*()_+-=
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Loading Modal -->
+    <div id="loading-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="bg-white dark:bg-gray-800 rounded-lg p-8 max-w-sm w-full mx-4">
+            <div class="flex justify-center mb-4">
+                <div class="relative w-12 h-12">
+                    <div class="absolute inset-0 border-4 rounded-full animate-spin border-r-gray-300 border-b-gray-300 border-l-gray-300 dark:border-r-gray-600 dark:border-b-gray-600 dark:border-l-gray-600 border-t-blue-600"></div>
+                </div>
+            </div>
+            <h3 class="text-center font-semibold mb-4" id="modal-status">Processing...</h3>
+            <div class="space-y-1 text-sm">
+                <div class="step-item active flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-upload"><span class="step-dot"></span><span>Uploading</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-trace"><span class="step-dot"></span><span>Tracing</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-shift"><span class="step-dot"></span><span>Shifting</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-flatten"><span class="step-dot"></span><span>Flattening</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-compile"><span class="step-dot"></span><span>Compiling</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-embed"><span class="step-dot"></span><span>Embedding</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-color"><span class="step-dot"></span><span>Coloring</span></div>
+                <div class="step-item flex items-center gap-2 px-2 py-1.5 rounded-md transition" id="step-optimize"><span class="step-dot"></span><span>Optimizing</span></div>
             </div>
         </div>
     </div>
 
-    <!-- Magic Font Preview & Success Modal -->
-    <div class="modal-overlay hidden" id="success-modal">
-        <div class="modal-card glass-card success-card">
-            <div class="success-icon-container animate-success">
-                <i data-lucide="check-circle" class="success-icon"></i>
-            </div>
-            <h2>Compilation Successful!</h2>
-            <p>Your custom font has been built and resides in memory.</p>
-
-            <!-- Dynamic Font Test Bench -->
-            <div class="test-bench">
-                <div class="bench-header">
-                    <span>Live Browser Test Bench</span>
-                    <span class="preview-badge" id="preview-font-badge">Active Font</span>
-                </div>
-                <textarea id="test-text" placeholder="Type here to test your compiled font in real-time inside the browser..."></textarea>
-                <div class="charset-preview-label">Monospace Character Preview:</div>
-                <div class="charset-grid" id="charset-grid">
-                    abcdefghijklmnopqrstuvwxyz<br>
-                    ABCDEFGHIJKLMNOPQRSTUVWXYZ<br>
-                    0123456789 !@#$%^&*()_+
-                </div>
+    <!-- Success Modal -->
+    <div id="success-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="bg-white dark:bg-gray-800 rounded-lg p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="text-center mb-6">
+                <i data-lucide="check-circle" class="w-12 h-12 text-green-600 mx-auto mb-2"></i>
+                <h2 class="text-2xl font-bold">Success!</h2>
+                <p class="text-gray-600 dark:text-gray-400">Font generated</p>
             </div>
 
-            <div class="download-section">
-                <h3>Download Font Files</h3>
-                <div class="download-buttons">
-                    <a href="#" id="download-ttf" class="btn btn-secondary" download><i data-lucide="download"></i> Color-Optimized TTF <span class="file-size" id="size-ttf"></span></a>
-                    <a href="#" id="download-woff2" class="btn btn-secondary" download><i data-lucide="download"></i> WOFF2 Font <span class="file-size" id="size-woff2"></span></a>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Preview</label>
+                    <textarea id="test-text" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg font-mono text-4xl h-28" placeholder="Type to preview..."></textarea>
                 </div>
-            </div>
 
-            <div class="modal-buttons">
-                <button class="btn btn-secondary" id="close-success-btn">Generate Another</button>
+                <div>
+                    <p class="text-sm font-medium mb-2">Character Set</p>
+                    <div class="p-4 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg font-mono text-xl leading-relaxed" id="charset-grid">
+                        abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <p class="text-sm font-medium">Download</p>
+                    <a href="#" id="download-ttf" class="block px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium text-center transition" download>TTF <span id="size-ttf"></span></a>
+                    <a href="#" id="download-woff2" class="block px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium text-center transition" download>WOFF2 <span id="size-woff2"></span></a>
+                </div>
+
+                <button id="close-success-btn" class="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg font-medium transition">Done</button>
             </div>
         </div>
     </div>
 
-    <!-- App Logic -->
-    <script>
-        // Init Lucide Icons
-        lucide.createIcons();
-
-        // State variables
-        let uploadedFiles = [];
-
-        // DOM elements
-        const upmInput = document.getElementById('upm');
-        const upmVal = document.getElementById('upm-val');
-        const widthInput = document.getElementById('advance_width');
-        const widthVal = document.getElementById('width-val');
-        const raiseInput = document.getElementById('vertical_raise');
-        const raiseVal = document.getElementById('raise-val');
-        const monospaceToggle = document.getElementById('monospace-toggle');
-        const advanceWidthGroup = document.getElementById('advance-width-group');
-        
-        const dropzone = document.getElementById('dropzone');
-        const fileInput = document.getElementById('file-input');
-        const previewCard = document.getElementById('preview-card');
-        const fileCount = document.getElementById('file-count');
-        const glyphGrid = document.getElementById('glyph-grid');
-        const generateBtn = document.getElementById('generate-btn');
-        const clearBtn = document.getElementById('clear-btn');
-        
-        const loadingModal = document.getElementById('loading-modal');
-        const successModal = document.getElementById('success-modal');
-        const modalStatus = document.getElementById('modal-status');
-        const downloadLink = document.getElementById('download-link');
-        const closeSuccessBtn = document.getElementById('close-success-btn');
-        
-        const testText = document.getElementById('test-text');
-        const fontnameInput = document.getElementById('fontname');
-        const fullnameInput = document.getElementById('fullname');
-        const familynameInput = document.getElementById('familyname');
-
-        // Realtime Sliders Listeners
-        upmInput.addEventListener('input', (e) => upmVal.textContent = e.target.value);
-        widthInput.addEventListener('input', (e) => widthVal.textContent = e.target.value);
-        raiseInput.addEventListener('input', (e) => raiseVal.textContent = e.target.value);
-
-        // Toggle Monospace slider activation & button text dynamically
-        monospaceToggle.addEventListener('change', () => {
-            if (monospaceToggle.checked) {
-                advanceWidthGroup.classList.remove('disabled');
-                widthInput.removeAttribute('disabled');
-                generateBtn.innerHTML = '<i data-lucide="zap"></i> Compile Monospace TTF';
-            } else {
-                advanceWidthGroup.classList.add('disabled');
-                widthInput.setAttribute('disabled', 'true');
-                generateBtn.innerHTML = '<i data-lucide="zap"></i> Compile Proportional TTF';
-            }
-            // Re-render Lucide icons inside the button
-            lucide.createIcons();
-        });
-
-        // Helper to infer character from file name
-        function inferCharacter(filename) {
-            const stem = filename.replace(/\.png$/i, '');
-            const prefix = stem.split('_')[0];
-            
-            if (prefix.length === 1) {
-                return { char: prefix, codepoint: '0x' + prefix.charCodeAt(0).toString(16).toUpperCase() };
-            }
-            
-            // Matches u0041 or u1F600
-            const uMatch = prefix.match(/^u([0-9a-fA-F]{4,6})$/);
-            if (uMatch) {
-                const val = parseInt(uMatch[1], 16);
-                return { char: String.fromCodePoint(val), codepoint: '0x' + val.toString(16).toUpperCase() };
-            }
-            
-            // Matches raw hex 0041 or 1F600
-            const hexMatch = prefix.match(/^([0-9a-fA-F]{4,6})$/);
-            if (hexMatch) {
-                const val = parseInt(hexMatch[1], 16);
-                return { char: String.fromCodePoint(val), codepoint: '0x' + val.toString(16).toUpperCase() };
-            }
-            
-            return { char: '?', codepoint: 'Unknown' };
-        }
-
-        // Handle File Addition
-        function handleFiles(files) {
-            Array.from(files).forEach(file => {
-                if (file.type !== "image/png" && !file.name.toLowerCase().endsWith('.png')) return;
-                
-                // Avoid duplicates
-                if (uploadedFiles.some(f => f.name === file.name)) return;
-                
-                uploadedFiles.push(file);
-            });
-
-            updateGrid();
-        }
-
-        // Update grid display
-        function updateGrid() {
-            if (uploadedFiles.length === 0) {
-                previewCard.classList.add('hidden');
-                generateBtn.classList.add('disabled');
-                generateBtn.disabled = true;
-                return;
-            }
-
-            previewCard.classList.remove('hidden');
-            generateBtn.classList.remove('disabled');
-            generateBtn.disabled = false;
-            fileCount.textContent = uploadedFiles.length;
-
-            glyphGrid.innerHTML = '';
-            
-            // Sort uploaded files for consistency
-            uploadedFiles.sort((a, b) => a.name.localeCompare(b.name));
-
-            uploadedFiles.forEach((file, index) => {
-                const reader = new FileReader();
-                const card = document.createElement('div');
-                card.className = 'glyph-card';
-                
-                const { char, codepoint } = inferCharacter(file.name);
-
-                card.innerHTML = `
-                    <button class="remove-glyph" data-index="${index}">&times;</button>
-                    <div class="glyph-img-container">
-                        <img id="img-preview-${index}" alt="${file.name}">
-                    </div>
-                    <div class="glyph-info">
-                        <span class="glyph-char">${char}</span>
-                        <span class="glyph-hex">${codepoint}</span>
-                        <span class="glyph-filename" title="${file.name}">${file.name}</span>
-                    </div>
-                `;
-
-                glyphGrid.appendChild(card);
-
-                reader.onload = function(e) {
-                    document.getElementById(`img-preview-${index}`).src = e.target.result;
-                }
-                reader.readAsDataURL(file);
-            });
-
-            // Re-bind remove buttons
-            document.querySelectorAll('.remove-glyph').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const idx = parseInt(btn.getAttribute('data-index'));
-                    uploadedFiles.splice(idx, 1);
-                    updateGrid();
-                });
-            });
-        }
-
-        // Drag & Drop Handlers
-        dropzone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropzone.classList.add('active');
-        });
-
-        dropzone.addEventListener('dragleave', () => {
-            dropzone.classList.remove('active');
-        });
-
-        dropzone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropzone.classList.remove('active');
-            handleFiles(e.dataTransfer.files);
-        });
-
-        dropzone.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            handleFiles(e.target.files);
-            fileInput.value = ''; // Reset
-        });
-
-        clearBtn.addEventListener('click', () => {
-            uploadedFiles = [];
-            updateGrid();
-        });
-
-        // Trigger loading stages simulation
-        function setStepActive(stepId) {
-            document.querySelectorAll('.step-item').forEach(el => el.classList.remove('active', 'completed'));
-            const activeStep = document.getElementById(stepId);
-            if (activeStep) {
-                activeStep.classList.add('active');
-                
-                // Mark previous steps completed
-                let prev = activeStep.previousElementSibling;
-                while (prev) {
-                    prev.classList.add('completed');
-                    prev = prev.previousElementSibling;
-                }
-            }
-        }
-
-        // Map backend job phases to the visual pipeline steps
-        const PHASE_TO_STEP = {
-            'queued': 'step-upload',
-            'tracing': 'step-trace',
-            'fontforge': 'step-compile',
-            'color-optimize': 'step-embed',
-            'woff': 'step-optimize',
-            'woff2': 'step-optimize',
-            'zipping': 'step-optimize'
-        };
-
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-        // Human-readable file size (e.g. 245.3 KB)
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-        }
-
-        // Poll GET /api/job/{id} until the job completes or fails
-        async function pollJobUntilDone(apiBase, jobId) {
-            while (true) {
-                await sleep(2000);
-
-                let status;
-                try {
-                    const res = await fetch(`${apiBase}/api/job/${jobId}`);
-                    if (res.status === 404) {
-                        throw new Error('Job expired or was not found on the server.');
-                    }
-                    if (!res.ok) continue; // transient server error — keep polling
-                    status = await res.json();
-                } catch (err) {
-                    if (err instanceof TypeError) continue; // network hiccup — keep polling
-                    throw err;
-                }
-
-                if (status.status === 'completed') return;
-                if (status.status === 'failed') {
-                    throw new Error(status.detail || 'Font generation failed on the server.');
-                }
-
-                // Reflect real backend progress in the modal
-                const stepId = PHASE_TO_STEP[status.phase];
-                if (stepId) setStepActive(stepId);
-                if (status.detail) modalStatus.textContent = status.detail;
-            }
-        }
-
-        // Dynamic API trigger
-        generateBtn.addEventListener('click', async () => {
-            if (uploadedFiles.length === 0) return;
-
-            const formData = new FormData();
-            uploadedFiles.forEach(file => {
-                formData.append('files', file);
-            });
-
-            formData.append('fontname', fontnameInput.value || 'MyCustomFont');
-            formData.append('fullname', fullnameInput.value || 'My Custom Font');
-            formData.append('familyname', familynameInput.value || 'My Family');
-            formData.append('upm', upmInput.value);
-            formData.append('advance_width', widthInput.value);
-            formData.append('vertical_raise', raiseInput.value);
-            formData.append('monospace', monospaceToggle.checked);
-
-            // Display loading overlay
-            loadingModal.classList.remove('hidden');
-            
-            // Simulate pipeline step visual state changes
-            setStepActive('step-upload');
-            modalStatus.textContent = 'Uploading files...';
-
-            try {
-                const apiBase = document.getElementById('api-base-url').value.trim().replace(/\/$/, '') || '';
-                const response = await fetch(`${apiBase}/api/generate-font`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.detail || 'Font generation failed on the server.');
-                }
-
-                // 202 Accepted: the server queued a background job — poll it until done
-                const { job_id } = await response.json();
-                if (!job_id) {
-                    throw new Error('Server did not return a job id.');
-                }
-
-                await pollJobUntilDone(apiBase, job_id);
-
-                // Job completed: download the ZIP result
-                modalStatus.textContent = 'Downloading font package...';
-                const resultResponse = await fetch(`${apiBase}/api/job/${job_id}/result`);
-                if (!resultResponse.ok) {
-                    const err = await resultResponse.json().catch(() => ({}));
-                    throw new Error(err.detail || 'Failed to download the generated font.');
-                }
-                const zipBlob = await resultResponse.blob();
-
-                // Extract ZIP file
-                const zip = await JSZip.loadAsync(zipBlob);
-                let fontFiles = {
-                    ttf: null,
-                    woff2: null
-                };
-
-                // Extract files from ZIP
-                for (const filename in zip.files) {
-                    const fileData = await zip.files[filename].async('blob');
-                    const fileUrl = URL.createObjectURL(fileData);
-
-                    if (filename.endsWith('.ttf')) {
-                        fontFiles.ttf = { blob: fileData, url: fileUrl, name: filename };
-                    } else if (filename.endsWith('.woff2')) {
-                        fontFiles.woff2 = { blob: fileData, url: fileUrl, name: filename };
-                    }
-                }
-
-                // Complete all steps in UI
-                document.querySelectorAll('.step-item').forEach(el => el.classList.add('completed'));
-
-                // Generate unique Font Family name to inject dynamically
-                const customFontName = (fontnameInput.value || 'MyCustomFont') + '_' + Date.now();
-
-                modalStatus.textContent = 'Injecting WOFF2 font for preview...';
-
-                // Use WOFF2 font for preview
-                if (fontFiles.woff2) {
-                    // Inject WOFF2 font dynamically into the web page!
-                    const fontFace = new FontFace(customFontName, `url(${fontFiles.woff2.url})`, { format: 'woff2' });
-                    await fontFace.load();
-                    document.fonts.add(fontFace);
-
-                    // Configure Preview Font Fam
-                    testText.style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
-                    document.getElementById('charset-grid').style.fontFamily = `"${customFontName}", "JetBrains Mono", monospace`;
-                    document.getElementById('preview-font-badge').textContent = fontnameInput.value;
-                    testText.value = `Hello from your new font!\nThis is a live preview of "${fullnameInput.value}".\n1234567890 !@#$%^&*()`;
-                } else {
-                    console.warn('WOFF2 font file not available for preview');
-                }
-
-                // Update download links with file sizes
-                for (const format of ['ttf', 'woff2']) {
-                    const link = document.getElementById(`download-${format}`);
-                    const sizeLabel = document.getElementById(`size-${format}`);
-                    const font = fontFiles[format];
-
-                    if (font) {
-                        link.href = font.url;
-                        link.download = font.name;
-                        link.style.display = 'inline-flex';
-                        sizeLabel.textContent = formatFileSize(font.blob.size);
-                    } else {
-                        link.style.display = 'none';
-                    }
-                }
-
-                // Transpose to success modal
-                loadingModal.classList.add('hidden');
-                successModal.classList.remove('hidden');
-
-            } catch (err) {
-                loadingModal.classList.add('hidden');
-                alert('Generation Error: ' + err.message);
-            }
-        });
-
-        // Close Success Mod
-        closeSuccessBtn.addEventListener('click', () => {
-            successModal.classList.add('hidden');
-        });
-    </script>
+    <script src="/static/app.js"></script>
 </body>
 </html>
