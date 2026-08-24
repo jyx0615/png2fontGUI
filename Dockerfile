@@ -58,12 +58,13 @@ RUN curl -sL https://github.com/RazrFalcon/svgcleaner/releases/download/v0.9.5/s
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-# nanoemoji is a git submodule (editable install, matches setup_env.sh).
+# nanoemoji is vendored as a git subtree (editable install, matches setup_env.sh).
 # Its setup.py uses setuptools-scm to derive the version from git describe,
-# but the submodule's .git metadata isn't reliably present/usable from a
-# plain COPY in the build context — pin a version explicitly instead.
+# but the subtree squash discards nanoemoji's own tag history (and a plain
+# COPY has no .git metadata anyway) — pin a version explicitly instead,
+# matching the upstream release vendored in (see CLAUDE.md).
 COPY nanoemoji ./nanoemoji
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_NANOEMOJI=0.1.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_NANOEMOJI=0.15.9
 RUN pip install --no-cache-dir --break-system-packages -e ./nanoemoji
 
 # Node production dependencies (same npm@11 upgrade as the builder stage — see comment there).
