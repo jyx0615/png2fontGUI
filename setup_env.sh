@@ -12,11 +12,7 @@ echo "Activating conda environment 'genFontAPI'..."
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate genFontAPI
 
-# Initialize and update git submodules
-echo "Initializing git submodules..."
-git submodule update --init --recursive
-
-# Setup nanoemoji
+# Setup nanoemoji (vendored as a git subtree in ./nanoemoji)
 if [ -d "nanoemoji" ]; then
     echo "Setting up nanoemoji..."
     cd nanoemoji
