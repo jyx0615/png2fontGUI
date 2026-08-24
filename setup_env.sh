@@ -12,15 +12,15 @@ echo "Activating conda environment 'genFontAPI'..."
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate genFontAPI
 
-# Initialize and update git submodules
-echo "Initializing git submodules..."
-git submodule update --init --recursive
-
-# Setup nanoemoji
+# Setup nanoemoji (vendored as a git subtree in ./nanoemoji)
+# nanoemoji's setup.py uses setuptools_scm, which normally derives the
+# package version from nanoemoji's own git tags via `git describe`. The
+# subtree merge squashes that tag history away, so we pin the version
+# explicitly (matching the commit vendored in) to avoid a build failure.
 if [ -d "nanoemoji" ]; then
     echo "Setting up nanoemoji..."
     cd nanoemoji
-    pip install -e .
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_NANOEMOJI=0.15.9 pip install -e .
     cd ..
 else
     echo "Warning: nanoemoji directory not found, skipping"

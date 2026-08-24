@@ -11,6 +11,8 @@ A web service that converts PNG glyph images into TTF/WOFF2 fonts. The service u
 
 By calling them as subprocesses, we keep the reliability of battle-tested tools while gaining the simplicity of Node.js for orchestration.
 
+**Vendoring nanoemoji:** `nanoemoji/` is vendored into this repo as a **git subtree** (not a submodule) at `googlefonts/nanoemoji`. It is checked out automatically with a normal `git clone` — no `git submodule update --init` step is needed. See [Updating the nanoemoji subtree](#updating-the-nanoemoji-subtree) below for how to pull upstream changes.
+
 ## Architecture at a Glance
 
 ```
@@ -72,7 +74,7 @@ Subprocess Wrappers (src/subprocess/)
 - **package.json** — Dependencies (express, multer, cors, archiver, smol-toml, which); scripts (build, start, dev)
 - **tsconfig.json** — Strict mode, ES2020, ES modules, .js extensions
 - **run.sh** — Activate conda, npm run build && npm start
-- **setup_env.sh** — (unchanged) Provision FontForge, nanoemoji, ttf2woff2, Python packages
+- **setup_env.sh** — Provision FontForge, nanoemoji (vendored subtree, no init step needed), ttf2woff2, Python packages
 
 ### Python Scripts (called as subprocesses from TypeScript)
 - **python/png2svg.py** — Argparse subcommands: `trace`, `shift`, `flatten`
@@ -228,6 +230,32 @@ export async function runMyTool(input: string): Promise<RunProcessResult> {
   return runProcess("my-tool", ["--input", input]);
 }
 ```
+
+### Updating the nanoemoji Subtree
+
+`nanoemoji/` is vendored via `git subtree`, not a submodule — it's plain tracked files, checked out automatically on clone, and safe to patch locally like any other vendored directory.
+
+To pull in upstream changes:
+```bash
+git subtree pull --prefix=nanoemoji https://github.com/googlefonts/nanoemoji.git main --squash
+```
+
+To push local changes back upstream (rare — only if contributing back):
+```bash
+git subtree push --prefix=nanoemoji https://github.com/googlefonts/nanoemoji.git my-branch
+```
+
+No `git submodule update --init`, `.gitmodules` entry, or separate clone step is needed.
+
+**Version pinning caveat:** nanoemoji's `setup.py` uses `setuptools_scm` (`use_scm_version`), which computes the installed package's version from `git describe` against nanoemoji's own tags. The subtree squash discards that tag history, so a plain `pip install -e nanoemoji/` fails with:
+```
+LookupError: setuptools-scm was unable to detect version ...
+```
+`setup_env.sh` works around this by pinning the version explicitly:
+```bash
+SETUPTOOLS_SCM_PRETEND_VERSION_FOR_NANOEMOJI=0.15.9 pip install -e .
+```
+When pulling a newer nanoemoji subtree, bump this pinned version to match the upstream release you vendored in.
 
 ## Behavioral Fidelity
 
