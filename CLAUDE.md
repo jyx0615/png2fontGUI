@@ -247,6 +247,16 @@ git subtree push --prefix=nanoemoji https://github.com/googlefonts/nanoemoji.git
 
 No `git submodule update --init`, `.gitmodules` entry, or separate clone step is needed.
 
+**Version pinning caveat:** nanoemoji's `setup.py` uses `setuptools_scm` (`use_scm_version`), which computes the installed package's version from `git describe` against nanoemoji's own tags. The subtree squash discards that tag history, so a plain `pip install -e nanoemoji/` fails with:
+```
+LookupError: setuptools-scm was unable to detect version ...
+```
+`setup_env.sh` works around this by pinning the version explicitly:
+```bash
+SETUPTOOLS_SCM_PRETEND_VERSION_FOR_NANOEMOJI=0.15.9 pip install -e .
+```
+When pulling a newer nanoemoji subtree, bump this pinned version to match the upstream release you vendored in.
+
 ## Behavioral Fidelity
 
 This codebase was ported from `app.py`, `pipeline.py`, `job_store.py` with exact parity. Key invariants:
