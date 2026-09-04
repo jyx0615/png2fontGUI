@@ -276,6 +276,8 @@ This codebase was ported from `app.py`, `pipeline.py`, `job_store.py` with exact
 - `tsc` fails: Ensure `tsconfig.json` has `"strict": true` and `"module": "ES2020"`
 
 ### Runtime Errors
+- `[Errno 86] Bad CPU type in executable: './svgcleaner'`: On Apple Silicon macOS, install Rosetta 2: `softwareupdate --install-rosetta`
+- `FontForge compilation or library error on macOS`: Install prerequisites via Homebrew: `brew install cmake glib pango gtk+3`
 - `fontforge not found`: Conda env not activated; run `source activate genFontAPI`
 - `job not found (404)`: Job already deleted by TTL sweep (2-hour expiry)
 - `Cannot write to tempdir`: Ensure `/tmp` (or $TMPDIR on macOS) has write permissions

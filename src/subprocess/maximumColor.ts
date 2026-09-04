@@ -24,7 +24,7 @@ export async function runMaximumColor(
 
   const result = await runProcessStreaming(
     MAXIMUM_COLOR_BIN,
-    ["--colr_version=0", ttfPath],
+    ["--colr_version=0", "--reuse_tolerance=-1", ttfPath],
     (line) => {
       if (line.trim()) {
         lines.push(line);

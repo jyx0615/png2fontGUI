@@ -116,6 +116,102 @@ Font generation settings are defined in [`config.toml`](config.toml). Request pa
 | `[font].fullname` | Full display name for the font | `Default Font` |
 | `[font].familyname` | Font family name | `Default` |
 
+### Performance Tuning (environment variables)
+
+Tracing precision is the dominant cost driver in the whole pipeline: every colour
+region VTracer emits becomes a separate COLR layer, and therefore a separate glyph
+in the final font. 162 source PNGs at `color_precision=8` produce a **39,404-glyph**
+font; the two single-threaded nanoemoji steps that compile it account for ~84% of
+job wall time.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VT_COLOR_PRECISION` | VTracer significant bits per RGB channel. Lower = fewer colour layers = fewer glyphs = faster and smaller. | `8` |
+| `VT_FILTER_SPECKLE` | VTracer minimum region size. No measurable effect on this artwork (the 2x nearest-neighbour upscale leaves no sub-threshold specks). | `2` |
+| `PORT` | HTTP listen port | `8000` |
+
+Measured on 162 chenille glyphs, 8-core host, submit -> ZIP:
+
+| `VT_COLOR_PRECISION` | Job time | paths/glyph | numGlyphs | TTF | WOFF2 | Visual cost |
+|---|---|---|---|---|---|---|
+| 8 (default) | 834s | 241 | 39,404 | 13.29 MB | 1.40 MB | — |
+| 6 | 494s | 190 | 31,216 | 10.50 MB | 1.08 MB | none measurable |
+| 5 | 448s | 160 | 26,188 | 9.15 MB | 0.96 MB | negligible |
+| 4 | 320s | 67 | 11,118 | 5.83 MB | 0.63 MB | loses fine stipple texture |
+| 3 | — | — | — | — | — | **unusable** — glyphs collapse |
+
+`6` is free: fidelity (RMSE against the source bitmap) is unchanged from `8`. `4` is
+2.6x faster and 2.3x smaller and is indistinguishable at <=96px, but flattens fine
+interior texture at display sizes — check it against your artwork before adopting.
+
+## Deployment (Google Cloud Run)
+
+```bash
+gcloud run deploy png2font-api \
+  --source . \
+  --region us-central1 \
+  --cpu=4 --memory=8Gi \
+  --no-cpu-throttling \
+  --timeout=3600 \
+  --concurrency=80 \
+  --max-instances=1 \
+  --min-instances=0 \
+  --set-env-vars VT_COLOR_PRECISION=6
+```
+
+Why each flag matters:
+
+- **`--no-cpu-throttling`** (instance-based billing) is **required**, not an
+  optimisation. `runGenerationJob()` is fire-and-forget: the handler returns `202`
+  immediately and the pipeline continues in the background. Under the default
+  request-based billing, Cloud Run throttles CPU the moment the response is sent, so
+  the job would crawl between status polls.
+- **`--cpu=4`** — the bottleneck is single-threaded (`write_combined_part_files` and
+  `write_font`), which is 81-84% of nanoemoji's wall time in every configuration.
+  Only the ~334 parallel ninja edges scale with cores, so doubling 4 -> 8 vCPU buys
+  roughly 13-15% on total job time for 2x the compute cost.
+- **`--timeout=3600`** covers the polling requests; the background job itself is not
+  bound by it.
+- **`--max-instances=1`** is currently **mandatory**. Job state lives on instance-local
+  disk (`JOBS_ROOT` in `src/constants.ts`), so a status poll routed to a second
+  instance returns 404. This also serialises jobs — see below.
+- **`--min-instances=0`** — scale to zero. A 10-30 minute job amortises any cold
+  start, and idling one 4 vCPU instance costs ~$231/month.
+
+### Known limitation: one job at a time
+
+`max-instances=1` means concurrent submissions queue behind each other. Fixing this
+requires moving job state off local disk — status to Firestore, artifacts to GCS —
+after which `--max-instances` can be raised. `src/jobStore.ts` is the seam
+(`jobDir()`, `writeJobStatus()`, `readJobStatus()`, `sweepStaleJobs()`).
+
+Note also that `/tmp` on Cloud Run is an in-memory filesystem, so job directories
+count against the memory limit while a job runs.
+
+### Cost estimate
+
+Instance-based billing, Tier-1 region (e.g. `us-central1`), at
+$0.000018/vCPU-second + $0.000002/GiB-second. The monthly free tier is
+240,000 vCPU-seconds + 450,000 GiB-seconds, which at 4 vCPU / 8 GiB is about
+**16.7 free instance-hours per month**.
+
+At 4 vCPU / 8 GiB:
+
+| Config | Per job | 100 jobs/mo | 500 jobs/mo | 1000 jobs/mo |
+|---|---|---|---|---|
+| Untuned (~30 min) | $0.158 | $10.62 | $73.98 | $153.18 |
+| `VT_COLOR_PRECISION=6` (~13 min) | $0.069 | $1.64 | $29.10 | $63.42 |
+| `VT_COLOR_PRECISION=4` (~9 min) | $0.048 | free | $18.54 | $42.30 |
+
+Egress is negligible (a ~4 MB ZIP per job — roughly $0.50 per 1000 jobs). Container
+image storage in Artifact Registry and Cloud Build minutes are billed separately and
+are minor for this workload.
+
+> Rates change; confirm against the [Cloud Run pricing page](https://cloud.google.com/run/pricing)
+> before budgeting. Job durations above are extrapolated from an 8-core workstation,
+> which has faster single-thread performance than a Cloud Run vCPU — since the
+> bottleneck is single-threaded, real times will skew longer.
+
 ## Project Structure
 
 ```
@@ -191,9 +287,17 @@ Embeds the color SVGs (still at original aspect ratio, not flattened) into the T
 
 ### Step 6: Generate COLR Table
 ```
-nanoemoji maximum_color --colr_version=0 [ttf]
+nanoemoji maximum_color --colr_version=0 --reuse_tolerance=-1 [ttf]
 ```
 Generates a `COLR`/`CPAL` (v0) table from the `'SVG '` table that was embedded in step 5. COLR v0 is broadly supported (including Safari 12.1+), so no bitmap (`sbix`) fallback table is needed. Falls back to the non-color TTF if it fails.
+
+`--reuse_tolerance=-1` disables nanoemoji's cross-glyph shape reuse search. Traced
+artwork never produces affine-identical paths across glyphs, so the search finds
+nothing while costing ~160s per job; disabling it yields a structurally identical
+font (verified: same glyph count, same COLR layer count).
+
+**This is the slowest step in the pipeline** — see
+[Performance Tuning](#performance-tuning-environment-variables).
 
 ### Step 7: Remove Unused Tables
 ```
@@ -278,12 +382,25 @@ npm run build
 
 **Solution**: The job directory may have been deleted by the TTL sweep (2-hour expiry), or the job ID is malformed (must be 32 lowercase hex chars).
 
-### FontForge Import Errors
-**Problem:** `fontforge` Python imports crash or segfault when run inside the interpreter.
+### FontForge Import or Build Errors on macOS
+**Problem:** `fontforge` fails during build, import, or execution on macOS.
 
-**Solution:** Use the supported CLI invocation instead (this is exactly what `fontforge.ts` does under the hood):
+**Solution:**
+1. Ensure all macOS system libraries and build tools are installed via Homebrew:
+```bash
+brew install cmake glib pango gtk+3
+```
+2. If using Python scripts directly, use the supported CLI invocation instead (which `fontforge.ts` uses under the hood):
 ```bash
 fontforge -script python/font.py
+```
+
+### `[Errno 86] Bad CPU type in executable: './svgcleaner'`
+**Problem:** On Apple Silicon Macs (M1/M2/M3/M4), running `svgcleaner` (x86_64 binary) fails with `[Errno 86] Bad CPU type in executable`.
+
+**Solution:** Install Rosetta 2 to enable x86_64 binary emulation:
+```bash
+softwareupdate --install-rosetta --agree-to-license
 ```
 
 ### Missing Python Packages
@@ -298,7 +415,7 @@ pip install vtracer tomli pillow fontTools
 **Problem:** Pipeline fails with "svgcleaner: command not found"
 
 **Solution:**
-1. Download from https://github.com/RazrFalcon/svgcleaner/releases
+1. Re-run `./setup_env.sh` (downloads the appropriate binary for macOS or Linux automatically), or download manually from https://github.com/RazrFalcon/svgcleaner/releases
 2. Place in project root directory
 3. Make executable: `chmod +x svgcleaner`
 

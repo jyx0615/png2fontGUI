@@ -22,6 +22,21 @@ UPM = CONFIG.upm
 ET.register_namespace("", SVG_NS)
 
 
+def get_svgcleaner_bin() -> str:
+    env_path = os.environ.get("SVGCLEANER_BIN")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    if os.path.exists("./svgcleaner"):
+        return "./svgcleaner"
+    repo_root_bin = os.path.join(os.path.dirname(__file__), "..", "svgcleaner")
+    if os.path.exists(repo_root_bin):
+        return repo_root_bin
+    which_bin = shutil.which("svgcleaner")
+    if which_bin:
+        return which_bin
+    return "./svgcleaner"
+
+
 def normalize_svg_root(svg_path: str) -> str:
     tree = ET.parse(svg_path)
     root = tree.getroot()
@@ -115,8 +130,8 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
             colormode="color",
             hierarchical="cutout",      # exact region edges; seams covered by strokes below
             mode="spline",              # smooth Bézier curves
-            filter_speckle=2,           # drop sub-pixel specks from the blurred edge gradient
-            color_precision=8,          # enough clusters for shading, without banding the blur into stair-steps
+            filter_speckle=int(os.environ.get("VT_FILTER_SPECKLE", 2)),
+            color_precision=int(os.environ.get("VT_COLOR_PRECISION", 6)),
             corner_threshold=60,
             length_threshold=3.0,
             splice_threshold=45,
@@ -175,12 +190,25 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
         normalized_svg_path = normalize_svg_root(temp_svg_path)
         
         try:
+            svgcleaner_bin = get_svgcleaner_bin()
             result = subprocess.run(
-                ["./svgcleaner", normalized_svg_path, svg_output_path], check=True
+                [svgcleaner_bin, normalized_svg_path, svg_output_path],
+                check=False,
+                capture_output=True,
+                text=True,
             )
             # If svgcleaner failed or didn't produce output, fall back to copying
             if result.returncode != 0 or not os.path.exists(svg_output_path):
                 shutil.copy(normalized_svg_path, svg_output_path)
+        except OSError as e:
+            if getattr(e, "errno", None) == 86 or "Bad CPU type" in str(e):
+                print(
+                    "[svgcleaner] Warning: Bad CPU type in executable (Errno 86). "
+                    "On Apple Silicon macOS, please run: softwareupdate --install-rosetta"
+                )
+            else:
+                print(f"[svgcleaner] Warning: failed to run {svgcleaner_bin} ({e})")
+            shutil.copy(normalized_svg_path, svg_output_path)
         finally:
             if os.path.exists(normalized_svg_path):
                 os.remove(normalized_svg_path)
