@@ -22,6 +22,21 @@ UPM = CONFIG.upm
 ET.register_namespace("", SVG_NS)
 
 
+def get_svgcleaner_bin() -> str:
+    env_path = os.environ.get("SVGCLEANER_BIN")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    if os.path.exists("./svgcleaner"):
+        return "./svgcleaner"
+    repo_root_bin = os.path.join(os.path.dirname(__file__), "..", "svgcleaner")
+    if os.path.exists(repo_root_bin):
+        return repo_root_bin
+    which_bin = shutil.which("svgcleaner")
+    if which_bin:
+        return which_bin
+    return "./svgcleaner"
+
+
 def normalize_svg_root(svg_path: str) -> str:
     tree = ET.parse(svg_path)
     root = tree.getroot()
@@ -175,8 +190,9 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
         normalized_svg_path = normalize_svg_root(temp_svg_path)
         
         try:
+            svgcleaner_bin = get_svgcleaner_bin()
             result = subprocess.run(
-                ["./svgcleaner", normalized_svg_path, svg_output_path], check=True
+                [svgcleaner_bin, normalized_svg_path, svg_output_path], check=True
             )
             # If svgcleaner failed or didn't produce output, fall back to copying
             if result.returncode != 0 or not os.path.exists(svg_output_path):

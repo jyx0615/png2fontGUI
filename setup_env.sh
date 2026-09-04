@@ -34,5 +34,27 @@ npm install -g ttf2woff2
 echo "Installing Python dependencies..."
 pip install -r requirements.txt
 
+# Download and install svgcleaner binary for current OS
+echo "Setting up svgcleaner..."
+SVGCLEANER_VERSION="0.9.5"
+OS_TYPE=$(uname -s)
+
+if [ "$OS_TYPE" = "Darwin" ]; then
+    echo "Detected macOS. Downloading svgcleaner for macOS..."
+    curl -sL "https://github.com/RazrFalcon/svgcleaner/releases/download/v${SVGCLEANER_VERSION}/svgcleaner_macos_${SVGCLEANER_VERSION}.zip" -o /tmp/svgcleaner.zip
+    unzip -o /tmp/svgcleaner.zip svgcleaner -d .
+    rm -f /tmp/svgcleaner.zip
+    chmod +x ./svgcleaner
+    xattr -d com.apple.quarantine ./svgcleaner 2>/dev/null || true
+    echo "svgcleaner (macOS) installed to ./svgcleaner"
+elif [ "$OS_TYPE" = "Linux" ]; then
+    echo "Detected Linux. Downloading svgcleaner for Linux (x86_64)..."
+    curl -sL "https://github.com/RazrFalcon/svgcleaner/releases/download/v${SVGCLEANER_VERSION}/svgcleaner_linux_x86_64_${SVGCLEANER_VERSION}.tar.gz" | tar -xz -C . svgcleaner
+    chmod +x ./svgcleaner
+    echo "svgcleaner (Linux) installed to ./svgcleaner"
+else
+    echo "Warning: Unsupported OS ($OS_TYPE) for automatic svgcleaner download. Please install svgcleaner manually."
+fi
+
 echo "Environment setup complete!"
 echo "To activate the environment, run: conda activate genFontAPI"
