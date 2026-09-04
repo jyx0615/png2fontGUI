@@ -47,6 +47,19 @@ if [ "$OS_TYPE" = "Darwin" ]; then
     chmod +x ./svgcleaner
     xattr -d com.apple.quarantine ./svgcleaner 2>/dev/null || true
     echo "svgcleaner (macOS) installed to ./svgcleaner"
+
+    # If running on Apple Silicon (arm64), ensure Rosetta 2 is installed for x86_64 binaries
+    if [ "$(uname -m)" = "arm64" ]; then
+        if ! ./svgcleaner --version &> /dev/null; then
+            echo "Apple Silicon detected and svgcleaner requires Rosetta 2. Installing Rosetta..."
+            softwareupdate --install-rosetta --agree-to-license || echo "If you see '[Errno 86] Bad CPU type in executable', please run: softwareupdate --install-rosetta"
+        fi
+    fi
+
+    # Check for FontForge on macOS
+    if ! command -v fontforge &> /dev/null; then
+        echo "Note: If FontForge installation or compilation fails on macOS, run: brew install cmake glib pango gtk+3"
+    fi
 elif [ "$OS_TYPE" = "Linux" ]; then
     echo "Detected Linux. Downloading svgcleaner for Linux (x86_64)..."
     curl -sL "https://github.com/RazrFalcon/svgcleaner/releases/download/v${SVGCLEANER_VERSION}/svgcleaner_linux_x86_64_${SVGCLEANER_VERSION}.tar.gz" | tar -xz -C . svgcleaner

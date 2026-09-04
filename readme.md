@@ -382,12 +382,25 @@ npm run build
 
 **Solution**: The job directory may have been deleted by the TTL sweep (2-hour expiry), or the job ID is malformed (must be 32 lowercase hex chars).
 
-### FontForge Import Errors
-**Problem:** `fontforge` Python imports crash or segfault when run inside the interpreter.
+### FontForge Import or Build Errors on macOS
+**Problem:** `fontforge` fails during build, import, or execution on macOS.
 
-**Solution:** Use the supported CLI invocation instead (this is exactly what `fontforge.ts` does under the hood):
+**Solution:**
+1. Ensure all macOS system libraries and build tools are installed via Homebrew:
+```bash
+brew install cmake glib pango gtk+3
+```
+2. If using Python scripts directly, use the supported CLI invocation instead (which `fontforge.ts` uses under the hood):
 ```bash
 fontforge -script python/font.py
+```
+
+### `[Errno 86] Bad CPU type in executable: './svgcleaner'`
+**Problem:** On Apple Silicon Macs (M1/M2/M3/M4), running `svgcleaner` (x86_64 binary) fails with `[Errno 86] Bad CPU type in executable`.
+
+**Solution:** Install Rosetta 2 to enable x86_64 binary emulation:
+```bash
+softwareupdate --install-rosetta --agree-to-license
 ```
 
 ### Missing Python Packages
@@ -402,7 +415,7 @@ pip install vtracer tomli pillow fontTools
 **Problem:** Pipeline fails with "svgcleaner: command not found"
 
 **Solution:**
-1. Download from https://github.com/RazrFalcon/svgcleaner/releases
+1. Re-run `./setup_env.sh` (downloads the appropriate binary for macOS or Linux automatically), or download manually from https://github.com/RazrFalcon/svgcleaner/releases
 2. Place in project root directory
 3. Make executable: `chmod +x svgcleaner`
 

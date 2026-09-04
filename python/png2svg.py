@@ -192,11 +192,23 @@ def wrap_png_to_svg(png_path, svg_output_path, width=150, height=150, target_upm
         try:
             svgcleaner_bin = get_svgcleaner_bin()
             result = subprocess.run(
-                [svgcleaner_bin, normalized_svg_path, svg_output_path], check=True
+                [svgcleaner_bin, normalized_svg_path, svg_output_path],
+                check=False,
+                capture_output=True,
+                text=True,
             )
             # If svgcleaner failed or didn't produce output, fall back to copying
             if result.returncode != 0 or not os.path.exists(svg_output_path):
                 shutil.copy(normalized_svg_path, svg_output_path)
+        except OSError as e:
+            if getattr(e, "errno", None) == 86 or "Bad CPU type" in str(e):
+                print(
+                    "[svgcleaner] Warning: Bad CPU type in executable (Errno 86). "
+                    "On Apple Silicon macOS, please run: softwareupdate --install-rosetta"
+                )
+            else:
+                print(f"[svgcleaner] Warning: failed to run {svgcleaner_bin} ({e})")
+            shutil.copy(normalized_svg_path, svg_output_path)
         finally:
             if os.path.exists(normalized_svg_path):
                 os.remove(normalized_svg_path)
